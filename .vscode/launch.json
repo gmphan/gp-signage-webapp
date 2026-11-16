@@ -33,7 +33,8 @@
       "options": [
         "Development",
         "QA",
-        "Production"
+        "Production",
+        "Development.local"
       ],
       "default": "Development"
     }
