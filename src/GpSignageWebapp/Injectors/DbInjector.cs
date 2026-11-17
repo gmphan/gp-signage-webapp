@@ -20,7 +20,9 @@ namespace GpSignageWebapp.Injectors
                 options.UseNpgsql(connectionString));
 
             services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
-            services.AddScoped<IRepoUnity, RepoUnity>();
+            services.AddScoped<ISlideRepository, SlideRepository>();
+            services.AddScoped<IDisplayRepository, DisplayRepository>();
         }
     }
 }
+

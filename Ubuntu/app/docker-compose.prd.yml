@@ -1,0 +1,34 @@
+name: gpsignage
+
+# This stack is intentionally INDEPENDENT of the portfolio app's stack:
+# - Own project name (`gpsignage`) and own default network, so the portfolio
+#   stack's `docker compose up` can never reconcile/touch these containers.
+# - Postgres is reached via its PUBLISHED host port (Host=<optiplex-lan-ip>:5432),
+#   not by joining the portfolio's Docker network.
+# - TLS is terminated by Cloudflare Tunnel; the app runs HTTP-only.
+#
+# Run with:
+#   docker compose -p gpsignage --env-file variables.prd.env -f docker-compose.prd.yml up -d
+
+services:
+  webapp:
+    image: ghcr.io/gmphan/gp-signage-webapp:latest
+    container_name: gp_signage_webapp_prd
+    restart: always
+    env_file:
+      - variables.prd.env
+    ports:
+      # 80 is taken by the portfolio app; expose signage on 8080 (host) -> 80 (container).
+      - "8080:80"
+    # No HTTPS port / cert mount: Cloudflare terminates TLS and talks HTTP to :8080.
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    restart: always
+    # Token is supplied via TUNNEL_TOKEN in variables.prd.env (git-ignored).
+    # Never hard-code the token here so it doesn't land in the repo.
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
+    depends_on:
+      - webapp
+
