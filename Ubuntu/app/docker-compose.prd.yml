@@ -17,18 +17,18 @@ services:
     restart: always
     env_file:
       - variables.prd.env
+    environment:
+      # Store uploaded media on the mounted volume (served at /uploads).
+      # Double underscore maps to the nested config key Storage:UploadsPath.
+      Storage__UploadsPath: /app/uploads
     ports:
       # 80 is taken by the portfolio app; expose signage on 8080 (host) -> 80 (container).
       - "8080:80"
     # No HTTPS port / cert mount: Cloudflare terminates TLS and talks HTTP to :8080.
+    volumes:
+      # Persist uploaded slide media across container rebuilds/restarts.
+      - signage_uploads:/app/uploads
 
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    container_name: cloudflared
-    restart: always
-    # Token is supplied via TUNNEL_TOKEN in variables.prd.env (git-ignored).
-    # Never hard-code the token here so it doesn't land in the repo.
-    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
-    depends_on:
-      - webapp
+volumes:
+  signage_uploads:
 

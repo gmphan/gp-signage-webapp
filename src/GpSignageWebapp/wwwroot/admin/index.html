@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Signage Admin</title>
+    <style>
+        :root {
+            --bg: #0f1216; --panel: #171b21; --panel2: #1e242c; --border: #2a323c;
+            --text: #e6e9ee; --muted: #93a0b0; --accent: #3b82f6; --accent2: #2563eb;
+            --ok: #22c55e; --off: #6b7280; --danger: #ef4444; --warn: #f59e0b;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+            background: var(--bg); color: var(--text); font-size: 15px;
+        }
+        header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 14px 22px; background: var(--panel); border-bottom: 1px solid var(--border);
+            position: sticky; top: 0; z-index: 10;
+        }
+        header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+        header .sub { color: var(--muted); font-size: 13px; }
+        .btn {
+            background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+            padding: 8px 14px; font-size: 14px; cursor: pointer; font-weight: 600;
+        }
+        .btn:hover { background: var(--accent2); }
+        .btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+        .btn.ghost:hover { background: var(--panel2); }
+        .btn.small { padding: 4px 9px; font-size: 12px; border-radius: 6px; }
+        .btn.danger { background: var(--danger); }
+        .btn:disabled { opacity: .5; cursor: default; }
+
+        main {
+            display: grid; grid-template-columns: 300px 1fr 360px;
+            gap: 18px; padding: 18px 22px; align-items: start;
+        }
+        @media (max-width: 1200px) { main { grid-template-columns: 1fr 1fr; } }
+        @media (max-width: 760px)  { main { grid-template-columns: 1fr; } }
+
+        .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+        .panel > h2 {
+            margin: 0; padding: 12px 16px; font-size: 14px; text-transform: uppercase;
+            letter-spacing: .05em; color: var(--muted); border-bottom: 1px solid var(--border);
+            background: var(--panel2); display: flex; justify-content: space-between; align-items: center;
+        }
+
+        /* Displays list */
+        .displays { display: flex; flex-direction: column; }
+        .display-row {
+            display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+            border-bottom: 1px solid var(--border); cursor: pointer;
+        }
+        .display-row:hover { background: var(--panel2); }
+        .display-row.active { background: #17283d; border-left: 3px solid var(--accent); }
+        .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--off); flex: 0 0 auto; }
+        .dot.online { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+        .display-row .meta { flex: 1; min-width: 0; }
+        .display-row .name { font-weight: 600; }
+        .display-row .slug { color: var(--muted); font-size: 12px; }
+        .display-row .row-actions { display: flex; gap: 4px; }
+        .display-row .icon-btn {
+            background: transparent; border: 1px solid var(--border); color: var(--muted);
+            border-radius: 6px; width: 26px; height: 26px; cursor: pointer; font-size: 13px; line-height: 1;
+        }
+        .display-row .icon-btn:hover { background: var(--panel2); color: var(--text); }
+        .display-row .icon-btn.del:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
+
+        /* Create / edit display form */
+        .display-form {
+            display: flex; flex-direction: column; gap: 8px;
+            padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--panel);
+        }
+        /* A class with display:flex overrides the [hidden] UA rule, so force it. */
+        .display-form[hidden] { display: none; }
+        .display-form .row { display: flex; gap: 8px; align-items: center; }
+        .display-form input[type="text"], .display-form select {
+            background: var(--bg); color: var(--text); border: 1px solid var(--border);
+            border-radius: 8px; padding: 8px 10px; font-size: 14px; width: 100%;
+        }
+        .display-form .slug-row { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+        .display-form .slug-row input { flex: 1; }
+        .form-error { color: var(--danger); font-size: 12px; }
+        .badge {
+            font-size: 11px; padding: 2px 8px; border-radius: 999px;
+            background: var(--panel2); border: 1px solid var(--border); color: var(--muted);
+        }
+
+        /* Upload form */
+        .upload-form {
+            display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+            padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--panel);
+        }
+        .upload-form input[type="file"] { flex: 1 1 200px; color: var(--muted); font-size: 13px; }
+        .upload-form input[type="text"] { flex: 1 1 140px; }
+        .upload-form input[type="number"] { flex: 0 0 90px; }
+        .upload-form input[type="text"], .upload-form input[type="number"] {
+            background: var(--bg); color: var(--text); border: 1px solid var(--border);
+            border-radius: 8px; padding: 8px 10px; font-size: 14px;
+        }
+
+        /* Slide library grid */
+        .slides {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 12px; padding: 16px;
+        }
+        .slide {
+            position: relative;
+            background: var(--panel2); border: 1px solid var(--border); border-radius: 10px;
+            overflow: hidden; transition: border-color .08s ease;
+        }
+        .slide:hover { border-color: var(--accent); }
+        .slide.in-playlist { border-color: var(--ok); }
+        .slide .thumb {
+            aspect-ratio: 16 / 9; background: #000 center/cover no-repeat;
+            display: flex; align-items: center; justify-content: center; color: var(--muted);
+        }
+        .slide .thumb img { width: 100%; height: 100%; object-fit: cover; }
+        .slide .cap {
+            padding: 8px 10px; font-size: 13px; display: flex; justify-content: space-between; gap: 8px;
+        }
+        .slide .cap .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .slide .cap .type { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+        .slide .actions { display: flex; gap: 6px; padding: 0 10px 10px; align-items: center; flex-wrap: wrap; }
+        .slide .actions .btn.small { flex: 1 1 auto; }
+        .slide .dur {
+            display: inline-flex; align-items: center; gap: 4px;
+            font-size: 12px; color: var(--muted);
+        }
+        .slide .dur input {
+            width: 52px; background: var(--bg); color: var(--text);
+            border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; font-size: 13px;
+        }
+        .slide .dur-auto { font-size: 12px; color: var(--muted); }
+        .slide .del {
+            position: absolute; top: 6px; right: 6px; z-index: 2;
+            background: rgba(0,0,0,.6); color: #fff; border: 0; border-radius: 6px;
+            width: 26px; height: 26px; cursor: pointer; font-size: 14px; line-height: 1;
+            opacity: 0; transition: opacity .12s ease;
+        }
+        .slide:hover .del { opacity: 1; }
+        .slide .del:hover { background: var(--danger); }
+
+        /* Playlist panel */
+        .playlist { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; min-height: 80px; }
+        .pl-item {
+            display: flex; align-items: center; gap: 10px;
+            background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 8px;
+        }
+        .pl-item .num {
+            flex: 0 0 24px; text-align: center; color: var(--muted); font-variant-numeric: tabular-nums;
+        }
+        .pl-item .pl-thumb {
+            flex: 0 0 64px; height: 40px; border-radius: 5px; background: #000 center/cover no-repeat;
+            display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 16px;
+        }
+        .pl-item .pl-thumb img { width: 100%; height: 100%; object-fit: cover; border-radius: 5px; }
+        .pl-item .pl-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .pl-item .pl-dur { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+        .pl-item .pl-controls { display: flex; gap: 4px; }
+
+        .empty { padding: 30px 16px; text-align: center; color: var(--muted); }
+        .hint { color: var(--muted); font-size: 12px; padding: 0 16px 12px; }
+
+        .toast {
+            position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(20px);
+            background: #1f2a37; border: 1px solid var(--border); color: var(--text);
+            padding: 10px 18px; border-radius: 10px; opacity: 0; transition: all .25s ease;
+            pointer-events: none; z-index: 50;
+        }
+        .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+        .toast.err { border-color: var(--danger); }
+    </style>
+</head>
+<body>
+    <header>
+        <div>
+            <h1>GP Signage Admin</h1>
+            <div class="sub">Select a display, then build its playlist. The TV cycles through it automatically.</div>
+        </div>
+        <button class="btn ghost" id="refreshBtn">Refresh</button>
+    </header>
+
+    <main>
+        <section class="panel">
+            <h2>
+                <span>Displays</span>
+                <button class="btn small" id="newDisplayBtn">+ New</button>
+            </h2>
+            <form class="display-form" id="displayForm" hidden>
+                <div class="row">
+                    <input type="text" id="dispName" placeholder="Name (e.g. Window 2)" required />
+                </div>
+                <div class="slug-row">
+                    <span>/player/?display=</span>
+                    <input type="text" id="dispSlug" placeholder="auto from name" />
+                </div>
+                <div class="row">
+                    <select id="dispOrientation">
+                        <option value="Portrait">Portrait</option>
+                        <option value="Landscape">Landscape</option>
+                    </select>
+                </div>
+                <div class="form-error" id="dispFormError"></div>
+                <div class="row">
+                    <button type="submit" class="btn small" id="dispSubmitBtn">Create</button>
+                    <button type="button" class="btn ghost small" id="dispCancelBtn">Cancel</button>
+                </div>
+            </form>
+            <div class="displays" id="displays"><div class="empty">Loading…</div></div>
+        </section>
+
+        <section class="panel">
+            <h2>Slide Library</h2>
+            <form id="uploadForm" class="upload-form">
+                <input type="file" id="fileInput" accept="image/*,video/mp4,video/webm,video/quicktime" required />
+                <input type="text" id="titleInput" placeholder="Title (optional)" />
+                <!-- Duration hidden until playback tuning; default 10s applies. -->
+                <input type="number" id="durationInput" value="10" min="1" hidden />
+                <button type="submit" class="btn" id="uploadBtn">Upload</button>
+            </form>
+            <div class="hint" id="libHint">No display selected.</div>
+            <div class="slides" id="slides"><div class="empty">Loading…</div></div>
+        </section>
+
+        <section class="panel">
+            <h2>
+                <span>Playlist</span>
+                <button class="btn ghost small" id="clearPlaylistBtn" title="Remove all slides">Clear</button>
+            </h2>
+            <div class="hint" id="plHint">Select a display to edit its playlist.</div>
+            <div class="playlist" id="playlist"><div class="empty">No display selected.</div></div>
+        </section>
+    </main>
+
+    <div class="toast" id="toast"></div>
+
+    <script src="/admin/admin.js"></script>
+</body>
+</html>

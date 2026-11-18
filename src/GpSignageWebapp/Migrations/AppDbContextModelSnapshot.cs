@@ -42,6 +42,13 @@ namespace GpSignageWebapp.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
+                    b.Property<string>("Orientation")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasDefaultValue("Landscape");
+
                     b.Property<string>("Slug")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -58,6 +65,67 @@ namespace GpSignageWebapp.Migrations
                         .IsUnique();
 
                     b.ToTable("displays", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Id = new Guid("11111111-1111-1111-1111-111111111111"),
+                            CreatedAtUtc = new DateTime(2026, 11, 18, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Name = "Reception",
+                            Orientation = "Portrait",
+                            Slug = "reception",
+                            UpdatedAtUtc = new DateTime(2026, 11, 18, 0, 0, 0, 0, DateTimeKind.Utc)
+                        },
+                        new
+                        {
+                            Id = new Guid("22222222-2222-2222-2222-222222222222"),
+                            CreatedAtUtc = new DateTime(2026, 11, 18, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Name = "Window",
+                            Orientation = "Portrait",
+                            Slug = "window",
+                            UpdatedAtUtc = new DateTime(2026, 11, 18, 0, 0, 0, 0, DateTimeKind.Utc)
+                        },
+                        new
+                        {
+                            Id = new Guid("33333333-3333-3333-3333-333333333333"),
+                            CreatedAtUtc = new DateTime(2026, 11, 18, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Name = "Pedicure",
+                            Orientation = "Portrait",
+                            Slug = "pedicure",
+                            UpdatedAtUtc = new DateTime(2026, 11, 18, 0, 0, 0, 0, DateTimeKind.Utc)
+                        },
+                        new
+                        {
+                            Id = new Guid("44444444-4444-4444-4444-444444444444"),
+                            CreatedAtUtc = new DateTime(2026, 11, 18, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Name = "Manicure",
+                            Orientation = "Portrait",
+                            Slug = "manicure",
+                            UpdatedAtUtc = new DateTime(2026, 11, 18, 0, 0, 0, 0, DateTimeKind.Utc)
+                        });
+                });
+
+            modelBuilder.Entity("GpSignageWebapp.Models.DisplaySlide", b =>
+                {
+                    b.Property<Guid>("DisplayId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("SlideId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer");
+
+                    b.HasKey("DisplayId", "SlideId");
+
+                    b.HasIndex("SlideId");
+
+                    b.HasIndex("DisplayId", "SortOrder");
+
+                    b.ToTable("display_slides", (string)null);
                 });
 
             modelBuilder.Entity("GpSignageWebapp.Models.Slide", b =>
@@ -115,6 +183,30 @@ namespace GpSignageWebapp.Migrations
                         .OnDelete(DeleteBehavior.SetNull);
 
                     b.Navigation("CurrentSlide");
+                });
+
+            modelBuilder.Entity("GpSignageWebapp.Models.DisplaySlide", b =>
+                {
+                    b.HasOne("GpSignageWebapp.Models.Display", "Display")
+                        .WithMany("Playlist")
+                        .HasForeignKey("DisplayId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("GpSignageWebapp.Models.Slide", "Slide")
+                        .WithMany()
+                        .HasForeignKey("SlideId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Display");
+
+                    b.Navigation("Slide");
+                });
+
+            modelBuilder.Entity("GpSignageWebapp.Models.Display", b =>
+                {
+                    b.Navigation("Playlist");
                 });
 #pragma warning restore 612, 618
         }

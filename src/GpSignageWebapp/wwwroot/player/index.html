@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Signage Player</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
+        body { cursor: none; } /* kiosk: hide pointer */
+
+        #stage {
+            position: fixed; inset: 0;
+            display: flex; align-items: center; justify-content: center;
+            background: #000;
+        }
+        /* Two stacked image layers for crossfade; one shown at a time. */
+        .media-img {
+            position: absolute; inset: 0;
+            width: 100%; height: 100%;
+            object-fit: contain;            /* letterbox, never crop */
+            opacity: 0;
+            transition: opacity .6s ease;
+        }
+        .media-img.visible { opacity: 1; }
+        #mediaVideo {
+            position: absolute; inset: 0;
+            width: 100%; height: 100%;
+            object-fit: contain;
+            background: #000;
+        }
+        /* Blank/idle state */
+        #idle {
+            color: #333; font-family: system-ui, sans-serif; font-size: 2vw;
+            text-align: center;
+        }
+
+        /* Connection status pill (bottom-right, subtle) */
+        #status {
+            position: fixed; right: 16px; bottom: 16px;
+            font-family: system-ui, sans-serif; font-size: 14px;
+            padding: 6px 12px; border-radius: 999px;
+            background: rgba(0,0,0,.6); color: #ddd;
+            opacity: .0; transition: opacity .3s ease;
+            pointer-events: none;
+        }
+        #status.show { opacity: .85; }
+        #status.err  { background: rgba(140,0,0,.8); color: #fff; }
+    </style>
+</head>
+<body>
+    <div id="stage">
+        <div id="idle">Waiting for content…</div>
+        <!-- Two layers alternate for crossfade transitions. -->
+        <img class="media-img" id="imgA" alt="" />
+        <img class="media-img" id="imgB" alt="" />
+        <video id="mediaVideo" playsinline muted hidden></video>
+    </div>
+
+    <div id="status"></div>
+
+    <!-- Vendored SignalR client (no CDN dependency; works offline / behind Cloudflare) -->
+    <script src="/lib/signalr/signalr.min.js"></script>
+    <script src="/player/player.js"></script>
+</body>
+</html>
+
