@@ -34,7 +34,7 @@ each TV just runs a browser (a Raspberry Pi in kiosk mode) that cycles through i
 │  - Docker host               │ ◄────────────────► │  - Chromium kiosk     │
 │  - postgres (shared)         │  via Cloudflare    │  - loads player URL   │
 │  - signage webapp (HTTP:80)  │  Tunnel hostname   │    only               │
-│  - cloudflared (tunnel)      │                    │  - no app / no DB     │
+│  - cloudflared (standalone)  │                    │  - no app / no DB     │
 │  - SignalR server            │                    │                       │
 │  - TLS terminated at CF edge │                    │                       │
 └──────────────────────────────┘                    └───────────────────────┘
@@ -79,8 +79,8 @@ Player (browser) ◄──── SignalR "ShowPlaylist" ────────
 │   └── tasks.json               # build / publish / watch / clean
 ├── Ubuntu/
 │   └── app/
-│       ├── docker-compose.prd.yml   # production compose: webapp + cloudflared (OptiPlex)
-│       └── variables.prd.env        # prod env incl. TUNNEL_TOKEN (git-ignored)
+│       ├── docker-compose.prd.yml   # production compose: webapp only (OptiPlex)
+│       └── variables.prd.env        # prod env: DB + ASPNETCORE_URLS + first-run admin (git-ignored)
 ├── src/
 │   ├── src.slnx                 # solution
 │   └── GpSignageWebapp/
@@ -351,8 +351,7 @@ ConnectionStrings__DefaultConnection=Host=<optiplex-lan-ip>;Port=5432;Database=g
 # App is HTTP-only; Cloudflare terminates TLS at the edge.
 ASPNETCORE_URLS=http://*:80
 
-# Cloudflare Tunnel token (compose passes ${TUNNEL_TOKEN}). KEEP SECRET.
-TUNNEL_TOKEN=<cloudflare-tunnel-token>
+# NOTE: no TUNNEL_TOKEN here — the Cloudflare Tunnel is a separate standalone project now.
 
 # Optional: store uploads outside wwwroot (e.g. a mounted volume).
 # Storage__UploadsPath=/var/gp-signage/uploads
@@ -398,17 +397,84 @@ docker buildx build --platform linux/amd64 -t ghcr.io/gmphan/gp-signage-webapp:l
 
 ### Production compose (`Ubuntu/app/docker-compose.prd.yml`)
 - `name: gpsignage` — **own compose project**, independent of the portfolio's `stack-prd` project.
-- Services: **`webapp`** (HTTP-only, `8080:80`, own network) and **`cloudflared`** (tunnel, `restart: always`).
+- Services: **`webapp` only** (HTTP-only, `8080:80`, own network, uploads on the `signage_uploads` volume).
+- **No `cloudflared` service here** — the Cloudflare Tunnel now runs as a **standalone project**
+  shared by multiple apps. This stack only exposes the app on host `:8080`; the tunnel routes
+  `signage.giangmichaelphan.com → http://<optiplex-lan-ip>:8080`.
 - **No postgres service** — reuses shared `local_postgres` via its **published host port**.
-- **No ports to the internet**, no cert mount. Cloudflare reaches the app through the tunnel.
+- **No ports to the internet**, no cert mount.
 
-Deploy on the OptiPlex:
+> On the OptiPlex only two files exist for this app: `docker-compose.prd.yml` and `variables.prd.env`
+> (no source, no SDK). Schema changes are applied **from your Mac** (see below), not on the server.
+
+---
+
+## Deploying to production (OptiPlex)
+
+Order matters: **push the image → update the DB schema → restart the stack.**
+
+### 1. Build & push the image (from your Mac, repo root)
 ```shell
-cd Ubuntu/app
+./build-and-publish.sh
+```
+(Publishes and pushes `ghcr.io/gmphan/gp-signage-webapp:latest`, linux/amd64.)
+
+### 2. Apply DB migrations from your Mac against the prod DB
+The app does **not** auto-migrate on startup, so run EF from your dev machine pointed at the shared
+Postgres on the OptiPlex. The connection string must be supplied via the **`ConnectionStrings__DefaultConnection`
+env var** (a `--connection` flag will NOT work — `DbInjector` reads it from configuration at design time):
+
+```shell
+cd src/GpSignageWebapp
+export ConnectionStrings__DefaultConnection="Host=192.168.68.130;Port=5432;Database=gp_signage;Username=ocbuumaster;Password=<PROD_PASSWORD>"
+
+dotnet ef migrations list      # optional: shows applied vs pending
+dotnet ef database update      # applies any pending migrations (e.g. AddAdminUsers)
+```
+> Your Mac must be able to reach `192.168.68.130:5432` (same LAN, or a tunnel/forward to 5432).
+> If the DB was freshly created, this applies **all** migrations in order. `Done.` = success.
+
+Verify the tables exist:
+```shell
+# from the OptiPlex:
+docker exec -it local_postgres psql -U ocbuumaster -d gp_signage -c "\dt"
+#   -> admin_users, display_slides, displays, slides, __EFMigrationsHistory
+```
+
+### 3. Deploy the container (on the OptiPlex)
+First-run admin: add `Auth__InitialAdmin__Password=<strong-password>` to `variables.prd.env`
+(used only when no admin users exist yet). Then, from the directory holding the compose + env files:
+
+```shell
+docker compose -p gpsignage --env-file variables.prd.env -f docker-compose.prd.yml pull
+docker compose -p gpsignage --env-file variables.prd.env -f docker-compose.prd.yml up -d
+docker compose -p gpsignage --env-file variables.prd.env -f docker-compose.prd.yml ps
+```
+
+> Pass the file with **`-f docker-compose.prd.yml`** — Compose only auto-discovers files named
+> `compose.yaml` / `docker-compose.yml`, so the `-f` flag is required for this name.
+
+Check the first-run admin + startup:
+```shell
+docker logs gp_signage_webapp_prd 2>&1 | grep -iE "initial admin|generated password|Now listening"
+```
+If you didn't set `Auth__InitialAdmin__Password`, a **generated password is logged once** — sign in
+with it and change it via the **Users** panel.
+
+### 4. Smoke test
+```shell
+curl -s http://192.168.68.130:8080/                                          # "GP Signage is running."
+curl -s -o /dev/null -w "%{http_code}\n" http://192.168.68.130:8080/api/displays          # 200 (public)
+curl -s -o /dev/null -w "%{http_code} -> %{redirect_url}\n" http://192.168.68.130:8080/admin/  # 302 -> /login.html
+```
+Then sign in at `https://signage.giangmichaelphan.com/login.html`.
+
+### Updating an existing deploy (no schema change)
+```shell
+docker compose -p gpsignage --env-file variables.prd.env -f docker-compose.prd.yml pull
 docker compose -p gpsignage --env-file variables.prd.env -f docker-compose.prd.yml up -d
 ```
-(Ensure `variables.prd.env` exists with `ConnectionStrings__DefaultConnection`,
-`ASPNETCORE_URLS=http://*:80`, `TUNNEL_TOKEN=...`, and that `gp_signage` exists on the shared Postgres.)
+If the release **added/changed the schema**, also re-run **step 2** first.
 
 ---
 
@@ -437,7 +503,7 @@ docker compose -p gpsignage --env-file variables.prd.env -f docker-compose.prd.y
         └───────────────┬───────────────┘
                         ▼
    OptiPlex 7070  —  LAN 192.168.68.130  |  public (ATT) 104.8.78.220
-   ├─ cloudflared             ──► http://192.168.68.130:8080
+   ├─ cloudflared (standalone)──► http://192.168.68.130:8080
    ├─ gp_signage_webapp_prd    host 8080 → container 80 (HTTP-only; TLS done by Cloudflare)
    ├─ gmphan_webapp_prd        portfolio app — SEPARATE stack, owns host 80/443 directly
    ├─ local_postgres           shared Postgres, publishes host 5432
@@ -462,10 +528,10 @@ docker compose -p gpsignage --env-file variables.prd.env -f docker-compose.prd.y
   → **No router ports opened for signage**, and it survives **dynamic public IP / CGNAT**.
 - **Route:** `signage.giangmichaelphan.com → http://192.168.68.130:8080` (service **HTTP**).
 - **TLS terminates at Cloudflare** → app is **HTTP-only** (`ASPNETCORE_URLS=http://*:80`).
-- **Token safety:** `TUNNEL_TOKEN` grants account access. Lives **only** in `variables.prd.env`
-  (git-ignored) and is passed as `${TUNNEL_TOKEN}` in compose. **Never commit it.** If exposed →
-  Cloudflare → Networks → Tunnels → gp-signage → Refresh token.
-- `cloudflared` runs as a **compose service** with `restart: always` (survives reboots).
+- **Tunnel runs as a standalone project** (shared by multiple apps), not in this app's compose.
+  This app's stack only exposes host `:8080`; the tunnel routes `signage.giangmichaelphan.com` to it.
+- **Token safety:** the tunnel token lives in the **standalone tunnel project's** env — never commit it.
+  If exposed → Cloudflare → Networks → Tunnels → gp-signage → Refresh token.
 
 ### ⚠️ Cloudflare forwards HTTP/HTTPS only
 This setup proxies **only 80/443**. It does **not** forward other ports such as **SSH (2222)**.
@@ -575,6 +641,6 @@ psql -h localhost -U ocbuumaster -d gp_signage \
   future boot). Set the slug you want **before** provisioning each Pi.
 - **Deleting a display** keeps its slides in the library (only the playlist assignment is removed).
 - **SSH is by IP, not the domain** — the domain resolves to Cloudflare, which only proxies 80/443.
-- **Cloudflare Tunnel token is a credential** (`TUNNEL_TOKEN`) — env-only, never commit.
+- **Cloudflare Tunnel token is a credential** — it lives in the **standalone tunnel project**, env-only, never commit.
 - `.gitignore` ignores `*.pfx`, `variables.*.env`, `bin/`, `obj/`.
 - `.dockerignore` excludes `https/`, secrets, and deploy files from the build context.
