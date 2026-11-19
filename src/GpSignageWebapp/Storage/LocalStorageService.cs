@@ -72,19 +72,63 @@ public class LocalStorageService : IStorageService
 
         Directory.CreateDirectory(_uploadDir);
 
+        // Images are downscaled + re-encoded (big PNG screenshots -> small JPEGs) so the
+        // player stays snappy. Videos pass through untouched. If optimization fails for
+        // any reason we fall back to storing the original bytes rather than blocking upload.
+        byte[]? optimized = null;
+        var outExt = ext.ToLowerInvariant();
+        if (IsImageExtension(ext))
+        {
+            try
+            {
+                await using var readStream = file.OpenReadStream();
+                using var buffer = new MemoryStream();
+                await readStream.CopyToAsync(buffer, ct);
+                buffer.Position = 0;
+
+                var result = ImageOptimizer.Optimize(buffer);
+                if (result is not null)
+                {
+                    optimized = result.Bytes;
+                    outExt = result.Extension;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Image optimization failed for {Name}; storing original.", file.FileName);
+            }
+        }
+
         // Generate a collision-resistant, extension-preserving name (never trust the client name).
-        var safeName = $"{DateTime.UtcNow:yyyyMMddHHmmss}_{Guid.NewGuid():N}{ext.ToLowerInvariant()}";
+        var safeName = $"{DateTime.UtcNow:yyyyMMddHHmmss}_{Guid.NewGuid():N}{outExt}";
         var fullPath = Path.Combine(_uploadDir, safeName);
 
         await using (var stream = new FileStream(fullPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
         {
-            await file.CopyToAsync(stream, ct);
+            if (optimized is not null)
+            {
+                await stream.WriteAsync(optimized, ct);
+            }
+            else
+            {
+                await file.CopyToAsync(stream, ct);
+            }
         }
 
         var url = $"{_publicPrefix}/{safeName}";
-        _logger.LogInformation("Saved upload {Bytes} bytes -> {Url}", file.Length, url);
+        _logger.LogInformation(
+            "Saved upload {Bytes} bytes -> {Url}{Optimized}",
+            file.Length, url,
+            optimized is not null ? $" (optimized to {optimized.Length} bytes)" : string.Empty);
         return url;
     }
+
+    private static bool IsImageExtension(string? ext) =>
+        ext is not null && (ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase)
+                         || ext.Equals(".jpeg", StringComparison.OrdinalIgnoreCase)
+                         || ext.Equals(".png", StringComparison.OrdinalIgnoreCase)
+                         || ext.Equals(".gif", StringComparison.OrdinalIgnoreCase)
+                         || ext.Equals(".webp", StringComparison.OrdinalIgnoreCase));
 
     public void Delete(string relativeUrl)
     {

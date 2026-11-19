@@ -105,7 +105,9 @@ Player (browser) ◄──── SignalR "ShowPlaylist" ────────
 │       │   ├── AuthEndpoints.cs             # login / logout / me
 │       │   └── UserEndpoints.cs             # admin user management
 │       ├── Hubs/SignageHub.cs               # JoinDisplay, Heartbeat; sends ShowPlaylist
-│       ├── Storage/LocalStorageService.cs   # saves uploads under wwwroot/uploads (or mounted path)
+│       ├── Storage/
+│       │   ├── LocalStorageService.cs        # saves uploads under wwwroot/uploads (or mounted path)
+│       │   └── ImageOptimizer.cs             # downscale + re-encode uploads (SkiaSharp) → TV-friendly
 │       ├── Data/
 │       │   ├── AppDbContext.cs
 │       │   ├── Configurations/              # Slide, Display, DisplaySlide
@@ -190,6 +192,12 @@ fixed GUIDs. They are fully editable/removable from the admin UI afterward.
 
 Uploads are validated: **≤ 50 MB**, extensions `.jpg .jpeg .png .gif .webp .mp4 .webm .mov`.
 Stored under `wwwroot/uploads/` (or `Storage:UploadsPath` if configured to a mounted volume).
+
+**Images are optimized on upload** (`Storage/ImageOptimizer.cs`, **SkiaSharp**): downscaled to fit
+**1920×1080** (aspect preserved, no upscaling), EXIF orientation applied, and re-encoded as **JPEG q85**
+(or **PNG** when the image has transparency). A multi‑MB PNG screenshot becomes a few‑hundred‑KB JPEG,
+so it decodes fast on the Pi and the player doesn't stall between slides. Videos pass through untouched.
+If optimization fails, the original bytes are stored (uploads never blocked).
 
 ### Displays — `/api/displays`
 | Method | Path | Purpose |
@@ -278,8 +286,12 @@ Click **Users** (header) to open the Users modal:
 
 - **`/player/?display=<slug>`** — the TV page. Connects via SignalR, joins its group, and runs the
   rotation engine (`player.js`): crossfade between images (two stacked layers), videos play to end,
-  loops, preloads next image, survives brief disconnects via auto-reconnect. No reload needed for
-  live updates.
+  loops, survives brief disconnects via auto-reconnect. No reload needed for live updates.
+  - **Preloading:** upcoming slides are decoded in the background (`preloadUpcoming`) so a heavy
+    image doesn't cause a visible pause between slides.
+  - **One-advance guarantees:** image loads use a `settled`/`loadSeq` guard (a cached image fires
+    `load` twice in Chromium — without the guard the rotation skips/stalls), and videos have a
+    hard **safety timeout = video length + 1s** so a video that never fires `ended` can't wedge the loop.
 - **`/login.html`** — sign-in page (sets the auth cookie, then redirects to `/admin/`).
 - **`/admin/`** — the control UI (`admin.js`), **auth-gated**. Header shows the signed-in user with
   **Users** (manage admins) and **Log out**. Three panels:
@@ -383,6 +395,9 @@ Auth__InitialAdmin__Password=<strong-password>   # if omitted, a random one is l
   full globalization.
 - `COPY ./src/GpSignageWebapp/bin/Release/net10.0/publish /app` — relies on the **pre-built publish output**.
 - Entry point: `dotnet GpSignageWebapp.dll`. **No cert copy.**
+- Image optimization uses **SkiaSharp** with `SkiaSharp.NativeAssets.Linux.NoDependencies` (no
+  libfontconfig/libc++ needed on the Debian `aspnet:10.0` base) — both are NuGet refs, so they ship
+  in the publish output automatically; no Dockerfile change required.
 
 ### Build & publish
 `build-and-publish.sh`:
@@ -476,6 +491,48 @@ docker compose -p gpsignage --env-file variables.prd.env -f docker-compose.prd.y
 ```
 If the release **added/changed the schema**, also re-run **step 2** first.
 
+### ⚠️ Stale JS after a deploy (Cloudflare edge cache)
+Cloudflare's edge cache can serve an **old `player.js` / `admin.js` for up to 4 h** (its default
+caches static `.js` with `max-age=14400`). Symptom: you rebuild, but the browser still runs the
+previous code (e.g. rotation still misbehaves, or changes don't appear). **The container is fine —
+the CDN is serving a stale copy.** Confirm and fix:
+
+```shell
+# from the OptiPlex — HIT + a large age means Cloudflare is serving a cached (old) file
+curl -sI "https://signage.giangmichaelphan.com/player/player.js" | grep -iE "cf-cache-status|age"
+# compare against the container directly (source of truth):
+curl -s "http://192.168.68.130:8080/player/player.js" | grep -c 'function preloadUpcoming'   # -> 1
+```
+
+**Immediate fix:** Cloudflare → **Caching → Configuration → Purge Cache → Purge by URL**:
+`https://signage.giangmichaelphan.com/player/player.js` (or **Purge Everything**).
+
+**Durable fix (two layers, both applied here):**
+1. **App sends `Cache-Control: no-cache, no-store, must-revalidate`** for `/player/*`, `/admin/*`,
+   `/lib/*`, and `/login.html` (see `Program.cs` `StaticFileOptions.OnPrepareResponse`). This alone
+   makes browsers + CDNs revalidate these assets. Uploads (`/uploads/*`) stay cacheable — their
+   filenames are content-unique.
+2. **Cloudflare Cache Rule** (optional belt-and-suspenders): **Caching → Cache Rules → Create rule**
+   → name `Bypass app assets` → expression:
+   ```
+   (starts_with(http.request.uri.path, "/player/")) or
+   (starts_with(http.request.uri.path, "/admin/"))  or
+   (starts_with(http.request.uri.path, "/lib/"))
+   ```
+   → **Then: Bypass cache** → Deploy.
+
+> The `&v=$(date +%s)` in `kiosk.sh` busts the **page** URL, but not the `<script src="/player/player.js">`.
+> The cache headers above are what protect the **scripts**.
+
+### ⚠️ Image optimization only affects NEW uploads
+Upload optimization (1920×1080 JPEG) runs at upload time. Files uploaded **before** it existed are
+still in the volume at their original size. After deploying the optimizer, **re-upload** any large
+images (delete the slide in the admin UI, then upload it again) so they get compressed. Verify:
+```shell
+docker logs gp_signage_webapp_prd 2>&1 | grep -i "optimized"   # "optimized to N bytes" on new uploads
+docker exec gp_signage_webapp_prd sh -c 'ls -lh /app/uploads/' # large old files vs. small new ones
+```
+
 ---
 
 ## VS Code
@@ -568,6 +625,203 @@ Host ubuntu-server
 
 ---
 
+## Raspberry Pi (kiosk display)
+
+Each TV runs a **Raspberry Pi in Chromium kiosk mode** — browser only, no app runtime, no Docker,
+no database. It just loads the player URL and rotates the playlist. All content is driven by the
+server over SignalR (see [Playback model](#playback-model-current-design)).
+
+```
+┌─────────────────────────────┐        HTTPS (Cloudflare)        ┌──────────────────────────┐
+│ Raspberry Pi                │ ───────────────────────────────► │ signage.giangmichaelphan.com │
+│  - Raspberry Pi OS (Wayland)│                                  │  (webapp on OptiPlex)     │
+│  - Chromium, kiosk mode     │ ◄─── SignalR "ShowPlaylist" ──── │                          │
+│  - systemd --user kiosk     │                                  └──────────────────────────┘
+│  - loads /player/?display=… │
+└─────────────────────────────┘
+```
+
+### Prerequisites
+- Raspberry Pi with **Raspberry Pi OS** (Bookworm/Trixie, **Wayland/labwc** desktop).
+- Connected to the internet (any network — the Pi reaches the app via the Cloudflare HTTPS URL).
+- The display's **slug** is set (e.g. `signage-slug-one`) and it has a playlist in the admin UI.
+
+### Packages
+```shell
+sudo apt update && sudo apt install -y chromium wlr-randr wlopm
+# (`chromium` may be `chromium-browser` on older images; wlopm may be optional)
+```
+
+### The kiosk launcher — `/home/pi/kiosk.sh`
+Launches Chromium full-screen (kiosk), rotates the screen to the wanted orientation, keeps the
+display awake, and relaunches Chromium forever if it exits. **Must be executable.**
+
+```bash
+#!/bin/bash
+# GP Signage kiosk launcher (Wayland / labwc, Raspberry Pi OS)
+set -u
+
+# ---- Settings (this Pi) ----
+SLUG="signage-slug-one"                 # display slug from the admin UI
+ROTATE="90"                             # portrait: 90 or 270; landscape: normal
+URL_HOST="signage.giangmichaelphan.com"
+# -----------------------------
+
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export WAYLAND_DISPLAY="wayland-0"
+
+# Wait for the Wayland compositor socket
+for i in $(seq 1 30); do
+  [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ] && break
+  sleep 1
+done
+
+# Auto-detect the connected HDMI output and apply rotation
+detect_output() {
+  wlr-randr 2>/dev/null | grep -E '^HDMI-A-[0-9]+ ' | head -n1 | awk '{print $1}'
+}
+OUTPUT="$(detect_output)"
+if [ -n "${OUTPUT}" ]; then
+  for i in $(seq 1 20); do
+    wlr-randr --output "$OUTPUT" --transform "$ROTATE" 2>/dev/null && break
+    sleep 1
+  done
+fi
+
+# Keep the screen awake (best-effort)
+wlopm --on '*' 2>/dev/null || true
+
+# Cache-buster: unique per launch so the page is always fetched fresh.
+# (App assets like player.js are additionally sent with Cache-Control: no-cache by the server.)
+URL="https://${URL_HOST}/player/?display=${SLUG}&v=$(date +%s)"
+
+# Relaunch Chromium forever if it ever exits
+while true; do
+  chromium \
+    --ozone-platform=wayland \
+    --kiosk \
+    --noerrdialogs \
+    --disable-infobars \
+    --disable-session-crashed-bubble \
+    --no-first-run \
+    --autoplay-policy=no-user-gesture-required \
+    --check-for-update-interval=31536000 \
+    --disable-features=Translate \
+    "$URL"
+  sleep 3
+done
+```
+
+> **Make it executable** — a missing execute bit is the #1 reason the service fails with
+> `status=203/EXEC`:
+> ```shell
+> chmod +x /home/pi/kiosk.sh
+> ```
+
+### The systemd user service — `~/.config/systemd/user/kiosk.service`
+Runs the launcher as a **user** service (so it has access to the Wayland session).
+
+```ini
+[Unit]
+Description=GP Signage Kiosk
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/home/pi/kiosk.sh
+Restart=always
+RestartSec=3
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+
+[Install]
+WantedBy=graphical-session.target
+```
+
+### Enable & start
+User services only start when the user is "lingered" (logged in even at the login screen) and
+after the graphical session is up:
+
+```shell
+# allow the user service to run without an interactive login
+sudo loginctl enable-linger pi
+
+# enable + start the kiosk
+systemctl --user daemon-reload
+systemctl --user enable kiosk.service
+systemctl --user start kiosk.service
+
+# check it
+systemctl --user status kiosk.service --no-pager
+journalctl --user -u kiosk.service -b --no-pager | tail -30
+```
+
+It also auto-starts on every boot (after the desktop) thanks to `enable-linger` + `enable`.
+
+### Orientation / rotation
+- Set `ROTATE` in `kiosk.sh`: `90` for portrait (one direction) or `270` (the other, if it's upside
+  down); leave unset/normal for landscape.
+- The script applies it at startup with `wlr-randr --output <HDMI> --transform "$ROTATE"`.
+- Find the output name with `wlr-randr` (e.g. `HDMI-A-1`, `HDMI-A-2`). The script auto-detects it.
+
+### Verifying / troubleshooting the Pi
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `status=203/EXEC` | `kiosk.sh` not executable (or bad shebang) | `chmod +x /home/pi/kiosk.sh`; ensure the first line is `#!/bin/bash` with Unix line endings (`sed -i 's/\r$//' ~/kiosk.sh`) |
+| `status=203/EXEC` after restart loop | crash before the `while true` loop | `bash -x /home/pi/kiosk.sh` to see the failing command |
+| Service **not** running at boot | linger not enabled / wrong target | `sudo loginctl enable-linger pi`; check `After=graphical-session.target` |
+| Screen blank / never done rotating | Wayland/compositor not ready | the script waits for `wayland-0`; check `wlr-randr` lists your HDMI output |
+| **Stuck on one slide** (rotation doesn't advance) | Chromium served a **stale cached `player.js`** | clear Chromium's HTTP cache: `rm -rf ~/.cache/chromium ~/.config/chromium/Default/Cache ~/.config/chromium/Default/"Code Cache"` then `systemctl --user restart kiosk.service` |
+| Changes to slides don't appear | stale page or CDN cache | restart kiosk (URL has `&v=$(date +%s)`); server sends `Cache-Control: no-cache` for `/player/*`; purge Cloudflare if needed (see below) |
+| Wrong/blank content | unknown slug or empty playlist | verify the slug matches the admin UI and the display has slides; the player shows an idle/error screen otherwise |
+
+### Live debugging on the Pi (no visible DevTools)
+Run a one-off foreground Chromium with console logging to the terminal, then Ctrl-C:
+
+```shell
+systemctl --user stop kiosk.service
+export XDG_RUNTIME_DIR="/run/user/$(id -u)" WAYLAND_DISPLAY="wayland-0"
+chromium --ozone-platform=wayland --kiosk --enable-logging=stderr --v=0 \
+  "https://signage.giangmichaelphan.com/player/?display=signage-slug-one&debug=1" \
+  2>&1 | grep -E "\[trace\]|ShowPlaylist|Error"
+# Ctrl-C after watching a rotation or two, then bring the kiosk back:
+systemctl --user start kiosk.service
+```
+`&debug=1` turns on the player's `[trace]` logs (`playPlaylist`, `REVEAL`, `ADVANCE`, …), which
+show exactly what the rotation engine is doing.
+
+### ⚠️ Stale `player.js` is the usual "fix didn't work" cause
+When you rebuild the server but the Pi still runs old JS, it is almost always a **cache**, not a
+broken build:
+1. **On the Pi** — Chromium's HTTP cache lives in **`~/.cache/chromium`** (not only
+   `~/.config/chromium`). Clear it and restart:
+   ```shell
+   rm -rf ~/.cache/chromium ~/.config/chromium/Default/Cache ~/.config/chromium/Default/"Code Cache"
+   systemctl --user restart kiosk.service
+   ```
+2. **At Cloudflare** — the edge may serve an old copy for up to 4 h. Purge the URL:
+   Caching → Purge by URL → `https://signage.giangmichaelphan.com/player/player.js`.
+3. **Confirm the served file is current** from the Pi:
+   ```shell
+   curl -s "https://signage.giangmichaelphan.com/player/player.js" | grep -n "ShowPlaylist\] received"
+   curl -s "http://192.168.68.130:8080/player/player.js"        | grep -n "ShowPlaylist\] received"
+   # both should print the SAME line number (the current build's)
+   ```
+   The server sends `Cache-Control: no-cache` for `/player|/admin|/lib` so this shouldn't recur —
+   but an *already-cached* copy persists until the Pi cache is cleared / Cloudflare is purged once.
+
+### Updating a Pi
+- **Slides/content:** nothing to do on the Pi — changes push live over SignalR (or the Pi picks them
+  up on its next reconnect).
+- **After a server rebuild** (new `player.js` etc.): purge Cloudflare for the asset if needed and, if
+  the Pi shows stale behavior, clear `~/.cache/chromium` + `systemctl --user restart kiosk.service`.
+- **Changing the slug/orientation:** edit `kiosk.sh` (`SLUG`, `ROTATE`) → `systemctl --user restart kiosk.service`.
+- **Renaming the display's *name*** is safe; changing its **slug** requires updating `SLUG` in `kiosk.sh`
+  (a live `SlugChanged` rejoin fixes an open tab, but not a future boot).
+
+---
+
 ## Common Commands
 
 ```shell
@@ -623,7 +877,10 @@ psql -h localhost -U ocbuumaster -d gp_signage \
 - [x] **Per-slide durations** (editable in admin; respected by the player)
 - [x] **Admin authentication** — cookie login, PBKDF2 password hashing, first-run admin bootstrap
 - [x] **User management** — add / rename / reset-password / delete admin users (admin-only)
-- [ ] Pi kiosk setup (Chromium kiosk + portrait rotation + systemd watchdog)  ← **next**
+- [x] **Player robustness** — preload upcoming slides; one-advance guards (fixes double-`load` skip/stall); video safety timeout
+- [x] **Upload image optimization** — downscale to 1920×1080 + JPEG/PNG re-encode (SkiaSharp) so heavy PNGs don't stall the TVs
+- [x] **Static asset cache busting** — `Cache-Control: no-cache` for `/player|/admin|/lib` so a rebuild is never shadowed by Cloudflare's 4h edge cache
+- [x] **Pi kiosk setup** — Chromium kiosk (Wayland), portrait rotation (`wlr-randr`), systemd **user** service + `enable-linger`, auto-restart (see [Raspberry Pi (kiosk display)](#raspberry-pi-kiosk-display))
 - [ ] Auto-apply migrations on startup (config-guarded) for production deploys
 - [ ] Optional: Cloudflare Access / app auth; drag-and-drop playlist reorder; display reordering
 
@@ -640,6 +897,16 @@ psql -h localhost -U ocbuumaster -d gp_signage \
   **slug** means updating that TV's kiosk URL (the live `SlugChanged` rejoin fixes an open tab, not a
   future boot). Set the slug you want **before** provisioning each Pi.
 - **Deleting a display** keeps its slides in the library (only the playlist assignment is removed).
+- **Keep slide images small.** New uploads are auto-optimized to ≤1920×1080 JPEG, but very large
+  source images (e.g. full‑res PNG screenshots) still cost upload time. Aim ≤1080p JPG/WebP; the
+  Pi decodes those instantly. Big images uploaded *before* the optimizer existed should be re-uploaded.
+- **After a rebuild, if the browser runs old JS**, it's usually Cloudflare's edge cache (not the image).
+  Purge `/player/player.js` and confirm `cf-cache-status`. The app now sends `no-cache` for app assets,
+  but an existing cached copy persists until purged once. Tools: `?debug=1` on the player URL turns on
+  `[trace]` logging.
+- **Pi kiosk services are systemd *user* services** — they need `sudo loginctl enable-linger pi` to start
+  without an interactive login, and `~/.cache/chromium` is where Chromium's HTTP cache actually lives
+  (clearing only `~/.config/chromium/...` often misses it). See [Raspberry Pi (kiosk display)](#raspberry-pi-kiosk-display).
 - **SSH is by IP, not the domain** — the domain resolves to Cloudflare, which only proxies 80/443.
 - **Cloudflare Tunnel token is a credential** — it lives in the **standalone tunnel project**, env-only, never commit.
 - `.gitignore` ignores `*.pfx`, `variables.*.env`, `bin/`, `obj/`.

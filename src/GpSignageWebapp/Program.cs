@@ -35,7 +35,28 @@ app.Use(async (context, next) =>
 
 // Serve static files from wwwroot (player page, vendored SignalR JS, uploads, etc.)
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        // App code (player.js, admin.js, signalr, html) changes on every deploy. Tell browsers
+        // AND intermediary caches (e.g. Cloudflare) to revalidate so a rebuilt image is never
+        // shadowed by a stale edge/browser copy. Uploads keep default caching: their filenames
+        // are content-unique, so they can be cached hard.
+        var p = ctx.Context.Request.Path.Value ?? string.Empty;
+        bool isAppAsset = p.StartsWith("/player", StringComparison.OrdinalIgnoreCase)
+                       || p.StartsWith("/admin", StringComparison.OrdinalIgnoreCase)
+                       || p.StartsWith("/lib", StringComparison.OrdinalIgnoreCase)
+                       || p.Equals("/login.html", StringComparison.OrdinalIgnoreCase);
+
+        if (isAppAsset)
+        {
+            ctx.Context.Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+            ctx.Context.Response.Headers["Pragma"] = "no-cache";
+            ctx.Context.Response.Headers["Expires"] = "0";
+        }
+    }
+});
 
 // If uploads are configured to a path outside wwwroot (e.g. a mounted volume),
 // also expose that directory at /uploads.
@@ -53,7 +74,7 @@ if (!string.IsNullOrWhiteSpace(uploadsPath))
     });
 }
 
-app.MapGet("/", () => "GP Signage is running.");
+app.MapGet("/", () => Results.Redirect("/admin"));
 
 // Minimal API endpoints (≈ controllers), organized per resource.
 app.MapDisplayEndpoints();
