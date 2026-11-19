@@ -75,7 +75,10 @@ secrets.json
 *.sqlite
 *.sqlite3
 App_Data/
-Data/
+# Runtime data dir at repo root only (NOT the source src/**/Data/ namespace folder).
+/Data/
+!src/GpSignageWebapp/Data/
+!src/GpSignageWebapp/Data/**
 
 # =========================
 # Uploaded signage assets

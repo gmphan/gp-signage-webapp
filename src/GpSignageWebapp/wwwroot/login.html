@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sign in · GP Signage</title>
+    <style>
+        :root {
+            --bg: #0f1216; --panel: #171b21; --border: #2a323c;
+            --text: #e6e9ee; --muted: #93a0b0; --accent: #3b82f6; --accent2: #2563eb;
+            --danger: #ef4444;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+            background: radial-gradient(1200px 600px at 50% -10%, #1a2433, var(--bg)); color: var(--text);
+        }
+        .card {
+            width: 360px; max-width: calc(100vw - 32px);
+            background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+            padding: 28px 26px; box-shadow: 0 20px 60px rgba(0,0,0,.4);
+        }
+        h1 { font-size: 20px; margin: 0 0 4px; }
+        .sub { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
+        label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 6px; }
+        input {
+            width: 100%; background: var(--bg); color: var(--text);
+            border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 15px;
+        }
+        input:focus { outline: none; border-color: var(--accent); }
+        button {
+            width: 100%; margin-top: 20px; background: var(--accent); color: #fff; border: 0;
+            border-radius: 8px; padding: 11px; font-size: 15px; font-weight: 600; cursor: pointer;
+        }
+        button:hover { background: var(--accent2); }
+        button:disabled { opacity: .6; cursor: default; }
+        .error { color: var(--danger); font-size: 13px; margin-top: 14px; min-height: 18px; }
+    </style>
+</head>
+<body>
+    <form class="card" id="loginForm">
+        <h1>GP Signage</h1>
+        <div class="sub">Sign in to manage displays &amp; slides.</div>
+
+        <label for="username">Username</label>
+        <input id="username" type="text" autocomplete="username" autofocus required />
+
+        <label for="password">Password</label>
+        <input id="password" type="password" autocomplete="current-password" required />
+
+        <button type="submit" id="submitBtn">Sign in</button>
+        <div class="error" id="error"></div>
+    </form>
+
+    <script>
+        const form = document.getElementById("loginForm");
+        const username = document.getElementById("username");
+        const password = document.getElementById("password");
+        const errorEl = document.getElementById("error");
+        const submitBtn = document.getElementById("submitBtn");
+
+        // If already signed in, go straight to the admin.
+        fetch("/api/auth/me").then(r => { if (r.ok) location.replace("/admin/"); }).catch(() => {});
+
+        form.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            errorEl.textContent = "";
+            submitBtn.disabled = true;
+            submitBtn.textContent = "Signing in…";
+            try {
+                const res = await fetch("/api/auth/login", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ username: username.value.trim(), password: password.value }),
+                });
+                if (res.ok) {
+                    location.replace("/admin/");
+                    return;
+                }
+                let msg = "Sign-in failed.";
+                try { msg = (await res.json()).error || msg; } catch { /* ignore */ }
+                errorEl.textContent = msg;
+            } catch (err) {
+                errorEl.textContent = "Network error. Is the server running?";
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = "Sign in";
+            }
+        });
+    </script>
+</body>
+</html>

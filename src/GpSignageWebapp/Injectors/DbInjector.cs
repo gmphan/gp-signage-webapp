@@ -22,6 +22,7 @@ namespace GpSignageWebapp.Injectors
             services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
             services.AddScoped<ISlideRepository, SlideRepository>();
             services.AddScoped<IDisplayRepository, DisplayRepository>();
+            services.AddScoped<IAdminUserRepository, AdminUserRepository>();
         }
     }
 }

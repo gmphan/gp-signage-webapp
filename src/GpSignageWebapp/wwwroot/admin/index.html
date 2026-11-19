@@ -172,6 +172,47 @@
         }
         .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
         .toast.err { border-color: var(--danger); }
+
+        /* Header actions */
+        .header-actions { display: flex; align-items: center; gap: 8px; }
+        .header-actions .who { color: var(--muted); font-size: 13px; margin-right: 4px; }
+        .header-actions .who b { color: var(--text); }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 100;
+            display: flex; align-items: center; justify-content: center; padding: 20px;
+        }
+        .modal-overlay[hidden] { display: none; }
+        .modal {
+            width: 560px; max-width: 100%; max-height: 85vh; overflow: auto;
+            background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+        }
+        .modal-head {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 14px 18px; border-bottom: 1px solid var(--border); background: var(--panel2);
+            position: sticky; top: 0;
+        }
+        .modal-head h2 { margin: 0; font-size: 16px; }
+        .user-form { padding: 16px 18px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+        .user-form .row { display: flex; gap: 8px; }
+        .user-form input {
+            flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+            border-radius: 8px; padding: 8px 10px; font-size: 14px;
+        }
+        .user-list { padding: 8px 18px 18px; display: flex; flex-direction: column; gap: 8px; }
+        .user-item {
+            display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+            background: var(--panel2); border: 1px solid var(--border); border-radius: 9px;
+        }
+        .user-item .u-meta { flex: 1; min-width: 0; }
+        .user-item .u-name { font-weight: 600; }
+        .user-item .u-username { color: var(--muted); font-size: 12px; }
+        .user-item .u-you {
+            font-size: 11px; color: var(--ok); border: 1px solid var(--ok);
+            border-radius: 999px; padding: 1px 8px;
+        }
+        .user-item .u-actions { display: flex; gap: 6px; }
     </style>
 </head>
 <body>
@@ -180,7 +221,12 @@
             <h1>GP Signage Admin</h1>
             <div class="sub">Select a display, then build its playlist. The TV cycles through it automatically.</div>
         </div>
-        <button class="btn ghost" id="refreshBtn">Refresh</button>
+        <div class="header-actions">
+            <span class="who" id="whoami" title="Signed in as"></span>
+            <button class="btn ghost" id="usersBtn">Users</button>
+            <button class="btn ghost" id="refreshBtn">Refresh</button>
+            <button class="btn ghost" id="logoutBtn">Log out</button>
+        </div>
     </header>
 
     <main>
@@ -234,6 +280,28 @@
             <div class="playlist" id="playlist"><div class="empty">No display selected.</div></div>
         </section>
     </main>
+
+    <!-- Users management modal -->
+    <div class="modal-overlay" id="usersModal" hidden>
+        <div class="modal">
+            <div class="modal-head">
+                <h2>Admin Users</h2>
+                <button class="icon-btn" id="closeUsersBtn" title="Close">✕</button>
+            </div>
+            <form class="user-form" id="userForm">
+                <div class="row">
+                    <input type="text" id="userUsername" placeholder="username" autocomplete="off" />
+                    <input type="text" id="userDisplayName" placeholder="Display name (optional)" autocomplete="off" />
+                </div>
+                <div class="row">
+                    <input type="password" id="userPassword" placeholder="Password (min 6 chars)" autocomplete="new-password" />
+                    <button type="submit" class="btn small" id="userSubmitBtn">Add user</button>
+                </div>
+                <div class="form-error" id="userFormError"></div>
+            </form>
+            <div class="user-list" id="userList"><div class="empty">Loading…</div></div>
+        </div>
+    </div>
 
     <div class="toast" id="toast"></div>
 

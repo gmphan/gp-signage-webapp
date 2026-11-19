@@ -18,11 +18,13 @@ public static class SlideEndpoints
     {
         var group = app.MapGroup("/api/slides");
 
-        group.MapGet("/", GetAllAsync);
+        // Library listing is public (the player/admin both read it); mutations require auth.
+        group.MapGet("/", GetAllAsync).AllowAnonymous();
         group.MapPost("/", UploadAsync)
-            .DisableAntiforgery();   // API consumed by our own JS via fetch; no antiforgery token
-        group.MapPatch("/{id:guid}", UpdateAsync);
-        group.MapDelete("/{id:guid}", DeleteAsync);
+            .DisableAntiforgery()    // API consumed by our own JS via fetch; no antiforgery token
+            .RequireAuthorization();
+        group.MapPatch("/{id:guid}", UpdateAsync).RequireAuthorization();
+        group.MapDelete("/{id:guid}", DeleteAsync).RequireAuthorization();
     }
 
     private static async Task<IResult> GetAllAsync(

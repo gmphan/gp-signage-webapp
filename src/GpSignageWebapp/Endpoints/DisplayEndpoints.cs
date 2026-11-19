@@ -24,17 +24,19 @@ public static class DisplayEndpoints
     {
         var group = app.MapGroup("/api/displays");
 
-        group.MapGet("/", GetAllAsync);
-        group.MapGet("/{slug}", GetBySlugAsync);
-        group.MapPost("/", CreateAsync);
-        group.MapPatch("/{slug}", UpdateAsync);
-        group.MapDelete("/{slug}", DeleteAsync);
-        group.MapPost("/{slug}/show", ShowSlideAsync);
+        // Read-only endpoints stay PUBLIC so kiosk players can fetch their content.
+        group.MapGet("/", GetAllAsync).AllowAnonymous();
+        group.MapGet("/{slug}", GetBySlugAsync).AllowAnonymous();
+        group.MapGet("/{slug}/playlist", GetPlaylistAsync).AllowAnonymous();
 
-        group.MapGet("/{slug}/playlist", GetPlaylistAsync);
-        group.MapPut("/{slug}/playlist", SetPlaylistAsync);
-        group.MapPost("/{slug}/playlist/{slideId:guid}", AddToPlaylistAsync);
-        group.MapDelete("/{slug}/playlist/{slideId:guid}", RemoveFromPlaylistAsync);
+        // Mutations require an authenticated admin.
+        group.MapPost("/", CreateAsync).RequireAuthorization();
+        group.MapPatch("/{slug}", UpdateAsync).RequireAuthorization();
+        group.MapDelete("/{slug}", DeleteAsync).RequireAuthorization();
+        group.MapPost("/{slug}/show", ShowSlideAsync).RequireAuthorization();
+        group.MapPut("/{slug}/playlist", SetPlaylistAsync).RequireAuthorization();
+        group.MapPost("/{slug}/playlist/{slideId:guid}", AddToPlaylistAsync).RequireAuthorization();
+        group.MapDelete("/{slug}/playlist/{slideId:guid}", RemoveFromPlaylistAsync).RequireAuthorization();
     }
 
     private static async Task<IResult> GetAllAsync(

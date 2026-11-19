@@ -83,6 +83,29 @@ public record UpdateDisplayRequest(
     string? Slug,
     string? Orientation);
 
+// ---- Auth / users ---------------------------------------------------------
+
+/// <summary>The signed-in admin, as returned by /api/auth/me and login.</summary>
+public record AdminUserDto(
+    Guid Id,
+    string Username,
+    string DisplayName,
+    DateTime CreatedAtUtc,
+    DateTime? LastLoginUtc)
+{
+    public static AdminUserDto From(Models.AdminUser u) => new(
+        u.Id, u.Username, u.DisplayName, u.CreatedAtUtc, u.LastLoginUtc);
+}
+
+/// <summary>Body of POST /api/auth/login.</summary>
+public record LoginRequest(string Username, string Password);
+
+/// <summary>Body of POST /api/users — create an admin user.</summary>
+public record CreateUserRequest(string Username, string Password, string? DisplayName);
+
+/// <summary>Body of PATCH /api/users/{id} — change display name and/or password. All optional.</summary>
+public record UpdateUserRequest(string? DisplayName, string? Password);
+
 /// <summary>Body of PATCH /api/slides/{id}. All fields optional.</summary>
 public record UpdateSlideRequest(
     string? Title,

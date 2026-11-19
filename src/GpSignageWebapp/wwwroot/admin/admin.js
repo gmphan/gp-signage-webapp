@@ -40,6 +40,25 @@
     const dispSubmitBtn = document.getElementById("dispSubmitBtn");
     const dispCancelBtn = document.getElementById("dispCancelBtn");
 
+    // Header / auth
+    const whoamiEl = document.getElementById("whoami");
+    const usersBtn = document.getElementById("usersBtn");
+    const logoutBtn = document.getElementById("logoutBtn");
+
+    // Users modal
+    const usersModal = document.getElementById("usersModal");
+    const closeUsersBtn = document.getElementById("closeUsersBtn");
+    const userForm = document.getElementById("userForm");
+    const userUsername = document.getElementById("userUsername");
+    const userDisplayName = document.getElementById("userDisplayName");
+    const userPassword = document.getElementById("userPassword");
+    const userSubmitBtn = document.getElementById("userSubmitBtn");
+    const userFormError = document.getElementById("userFormError");
+    const userListEl = document.getElementById("userList");
+
+    // Current signed-in admin
+    let currentUser = null;
+
     // ---- Helpers --------------------------------------------------------------
     function esc(s) {
         return String(s ?? "").replace(/[&<>"']/g, c => (
@@ -58,6 +77,11 @@
 
     async function api(url, options) {
         const res = await fetch(url, options);
+        if (res.status === 401) {
+            // Session expired / not signed in — bounce to login.
+            location.replace("/login.html");
+            throw new Error("Not signed in.");
+        }
         if (!res.ok) {
             let detail = "";
             try { detail = (await res.json()).error || ""; } catch { /* ignore */ }
@@ -441,10 +465,154 @@
         }
     }
 
+    // ---- Auth: current user + logout -----------------------------------------
+    async function loadMe() {
+        try {
+            currentUser = await api("/api/auth/me");
+            whoamiEl.innerHTML = `Signed in as <b>${esc(currentUser.displayName || currentUser.username)}</b>`;
+        } catch {
+            // api() already redirects on 401; nothing else to do.
+        }
+    }
+
+    logoutBtn.addEventListener("click", async () => {
+        try { await fetch("/api/auth/logout", { method: "POST" }); } catch { /* ignore */ }
+        location.replace("/login.html");
+    });
+
+    // ---- Users modal ----------------------------------------------------------
+    let editingUser = null;   // id when editing, null when creating
+
+    usersBtn.addEventListener("click", () => {
+        editingUser = null;
+        resetUserForm();
+        usersModal.hidden = false;
+        loadUsers();
+    });
+    closeUsersBtn.addEventListener("click", () => { usersModal.hidden = true; });
+    usersModal.addEventListener("click", (e) => {
+        if (e.target === usersModal) usersModal.hidden = true;   // click backdrop to close
+    });
+
+    function resetUserForm() {
+        userFormError.textContent = "";
+        userUsername.value = "";
+        userUsername.disabled = false;
+        userDisplayName.value = "";
+        userPassword.value = "";
+        userPassword.placeholder = "Password (min 6 chars)";
+        userSubmitBtn.textContent = "Add user";
+    }
+
+    async function loadUsers() {
+        userListEl.innerHTML = `<div class="empty">Loading…</div>`;
+        try {
+            const users = await api("/api/users");
+            if (!users.length) { userListEl.innerHTML = `<div class="empty">No users.</div>`; return; }
+            userListEl.innerHTML = users.map(u => {
+                const you = currentUser && u.id === currentUser.id;
+                return `
+                    <div class="user-item" data-id="${esc(u.id)}">
+                        <div class="u-meta">
+                            <div class="u-name">${esc(u.displayName || u.username)} ${you ? '<span class="u-you">you</span>' : ""}</div>
+                            <div class="u-username">@${esc(u.username)}${u.lastLoginUtc ? " · last login " + esc(new Date(u.lastLoginUtc).toLocaleString()) : " · never logged in"}</div>
+                        </div>
+                        <div class="u-actions">
+                            <button class="btn ghost small" data-udisplay="${esc(u.id)}">Rename</button>
+                            <button class="btn ghost small" data-upass="${esc(u.id)}">Reset password</button>
+                            <button class="btn ghost small" data-udel="${esc(u.id)}" ${you ? "disabled title=\"You can't delete yourself\"" : ""}>Delete</button>
+                        </div>
+                    </div>`;
+            }).join("");
+
+            userListEl.querySelectorAll("[data-udisplay]").forEach(b =>
+                b.addEventListener("click", () => renameUser(b.dataset.udisplay)));
+            userListEl.querySelectorAll("[data-upass]").forEach(b =>
+                b.addEventListener("click", () => resetPassword(b.dataset.upass)));
+            userListEl.querySelectorAll("[data-udel]").forEach(b =>
+                b.addEventListener("click", () => deleteUser(b.dataset.udel)));
+        } catch (err) {
+            userListEl.innerHTML = `<div class="empty">Failed: ${esc(err.message)}</div>`;
+        }
+    }
+
+    userForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        userFormError.textContent = "";
+        const username = userUsername.value.trim();
+        const password = userPassword.value;
+        if (!username) { userFormError.textContent = "Username is required."; return; }
+        if (password.length < 6) { userFormError.textContent = "Password must be at least 6 characters."; return; }
+
+        userSubmitBtn.disabled = true;
+        try {
+            await api("/api/users", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ username, password, displayName: userDisplayName.value.trim() || null }),
+            });
+            resetUserForm();
+            await loadUsers();
+            toast(`User “${username}” added.`);
+        } catch (err) {
+            userFormError.textContent = err.message;
+        } finally {
+            userSubmitBtn.disabled = false;
+        }
+    });
+
+    async function renameUser(id) {
+        const name = prompt("New display name:");
+        if (name === null) return;
+        try {
+            await api(`/api/users/${enc(id)}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ displayName: name.trim() }),
+            });
+            await loadUsers();
+            toast("User updated.");
+        } catch (err) {
+            toast(`Failed: ${err.message}`, true);
+        }
+    }
+
+    async function resetPassword(id) {
+        const pw = prompt("New password (min 6 characters):");
+        if (pw === null) return;
+        if (pw.length < 6) { toast("Password must be at least 6 characters.", true); return; }
+        try {
+            await api(`/api/users/${enc(id)}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ password: pw }),
+            });
+            toast("Password reset.");
+        } catch (err) {
+            toast(`Failed: ${err.message}`, true);
+        }
+    }
+
+    async function deleteUser(id) {
+        if (!confirm("Delete this user? They will no longer be able to sign in.")) return;
+        try {
+            await api(`/api/users/${enc(id)}`, { method: "DELETE" });
+            await loadUsers();
+            toast("User deleted.");
+        } catch (err) {
+            toast(`Failed: ${err.message}`, true);
+        }
+    }
+
     // ---- Wire up --------------------------------------------------------------
     refreshBtn.addEventListener("click", load);
     uploadForm.addEventListener("submit", uploadSlide);
     setInterval(() => { load(); }, 30000);   // keep online/status fresh
 
-    load();
+    // Bootstrap: confirm we're signed in, then load data.
+    (async () => {
+        await loadMe();
+        if (!currentUser) return;   // api() redirected to login on 401
+        load();
+    })();
 })();

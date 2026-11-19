@@ -93,11 +93,17 @@ Player (browser) ◄──── SignalR "ShowPlaylist" ────────
 │       ├── Models/
 │       │   ├── Slide.cs                     # + MediaType enum (Image/Video)
 │       │   ├── Display.cs                   # + DisplayOrientation enum
-│       │   └── DisplaySlide.cs              # playlist join (DisplayId, SlideId, SortOrder)
-│       ├── Dtos/Dtos.cs                     # SlideDto, DisplayDto, PlaylistDto, request records
+│       │   ├── DisplaySlide.cs              # playlist join (DisplayId, SlideId, SortOrder)
+│       │   └── AdminUser.cs                 # admin credentials (hashed password)
+│       ├── Auth/
+│       │   ├── AuthSetup.cs                 # cookie auth config + AuthConstants
+│       │   └── PasswordHasher.cs            # PBKDF2 (SHA-256) hash/verify
+│       ├── Dtos/Dtos.cs                     # SlideDto, DisplayDto, PlaylistDto, AdminUserDto, request records
 │       ├── Endpoints/
 │       │   ├── DisplayEndpoints.cs          # displays CRUD + playlist + show
-│       │   └── SlideEndpoints.cs            # upload / list / update / delete slides
+│       │   ├── SlideEndpoints.cs            # upload / list / update / delete slides
+│       │   ├── AuthEndpoints.cs             # login / logout / me
+│       │   └── UserEndpoints.cs             # admin user management
 │       ├── Hubs/SignageHub.cs               # JoinDisplay, Heartbeat; sends ShowPlaylist
 │       ├── Storage/LocalStorageService.cs   # saves uploads under wwwroot/uploads (or mounted path)
 │       ├── Data/
@@ -148,6 +154,16 @@ Player (browser) ◄──── SignalR "ShowPlaylist" ────────
 Primary key `(DisplayId, SlideId)` (a slide appears at most once per display).
 Index `(DisplayId, SortOrder)` for ordered reads.
 
+### `AdminUser` (table `admin_users`)
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | uuid | PK |
+| `Username` | varchar(100) | **unique**, stored lowercase (case-insensitive login) |
+| `DisplayName` | varchar(200) | friendly name |
+| `PasswordHash` | varchar(400) | PBKDF2 `iterations.saltB64.hashB64` (never plaintext) |
+| `CreatedAtUtc` | timestamptz | |
+| `LastLoginUtc` | timestamptz? | updated on successful sign-in |
+
 ### Seeded displays
 Migration `SeedDisplays` seeds **Reception / Window / Pedicure / Manicure** (all Portrait) with
 fixed GUIDs. They are fully editable/removable from the admin UI afterward.
@@ -158,6 +174,7 @@ fixed GUIDs. They are fully editable/removable from the admin UI afterward.
 - `20261118205057_SeedDisplays` → default TVs
 - `20261118210301_AddDisplayOrientation` → `Orientation` column
 - `20261118230444_AddDisplayPlaylist` → `display_slides`
+- `20261118234726_AddAdminUsers` → `admin_users`
 
 ---
 
@@ -208,13 +225,64 @@ Every playlist mutation **pushes `ShowPlaylist`** to that display's SignalR grou
 
 ---
 
+## Authentication & Users
+
+The admin UI + management API are protected by **cookie authentication**. Kiosk players and public
+read endpoints stay open so TVs keep working without logging in.
+
+### What's protected
+- **Admin page** (`/admin/`) — redirects to `/login.html` when not signed in.
+- **Write actions** — all display/slide/playlist **mutations** and all `/api/users*` endpoints
+  return **401** unless an admin cookie is present.
+- **Public:** `/player/*`, `/uploads/*`, `/lib/*`, `GET /api/displays*`, `GET /api/displays/{slug}/playlist`,
+  `GET /api/slides`, `/hubs/signage`, and `POST /api/auth/login|logout`.
+
+### How it works
+- Passwords are hashed with **PBKDF2 (SHA-256, 100k iterations, random salt)** — see `Auth/PasswordHasher.cs`.
+  Stored format: `iterations.saltB64.hashB64`.
+- Auth is configured in `Auth/AuthSetup.cs` (registered by `AuthInjector`). Cookie name `gp_signage_auth`,
+  HttpOnly, SameSite=Lax, 12h sliding expiry. API requests get **401/403** instead of redirects.
+- Usernames are stored **lowercased** and unique; login is case-insensitive.
+
+### First-run admin (bootstrap)
+On startup, if there are **no** admin users, one is created from config (`Program.BootstrapAdminAsync`):
+```dotenv
+Auth__InitialAdmin__Username=admin          # default "admin"
+Auth__InitialAdmin__Password=<a-strong-password>   # if omitted, a random one is logged ONCE
+Auth__InitialAdmin__DisplayName=Administrator      # optional
+```
+> ⚠️ If you don't set a password, a **random password is printed to the logs** on first start — sign in
+> with it and change it. Set `Auth__InitialAdmin__Password` for a deterministic first login.
+
+### Managing users (in the admin UI)
+Click **Users** (header) to open the Users modal:
+- **Add user** — username, optional display name, password (min 6).
+- **Rename** — change display name. **Reset password** — set a new one.
+- **Delete** — remove a user (you can't delete yourself or the last admin).
+- **Log out** — clears the cookie and returns to `/login.html`. Current user is shown in the header.
+
+### Auth API
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| `POST` | `/api/auth/login` | public | verify credentials, set cookie, returns the user |
+| `POST` | `/api/auth/logout` | public | clear cookie |
+| `GET` | `/api/auth/me` | required | the current admin (401 if not signed in) |
+| `GET` | `/api/users` | required | list users |
+| `POST` | `/api/users` | required | create user (`username`, `password`, `displayName?`) |
+| `PATCH` | `/api/users/{id}` | required | change `displayName` and/or `password` |
+| `DELETE` | `/api/users/{id}` | required | delete user (not self / not last admin) |
+
+---
+
 ## Front-end pages (`wwwroot`)
 
 - **`/player/?display=<slug>`** — the TV page. Connects via SignalR, joins its group, and runs the
   rotation engine (`player.js`): crossfade between images (two stacked layers), videos play to end,
   loops, preloads next image, survives brief disconnects via auto-reconnect. No reload needed for
   live updates.
-- **`/admin/`** — the control UI (`admin.js`). Three panels:
+- **`/login.html`** — sign-in page (sets the auth cookie, then redirects to `/admin/`).
+- **`/admin/`** — the control UI (`admin.js`), **auth-gated**. Header shows the signed-in user with
+  **Users** (manage admins) and **Log out**. Three panels:
   - **Displays** — create (+ New), edit (✎), delete (🗑), select.
   - **Slide Library** — upload, delete, **per-slide duration** editor, `+ Add` to the selected display.
   - **Playlist** — ordered list for the selected display: reorder (↑/↓), remove (✕), Clear.
@@ -288,6 +356,11 @@ TUNNEL_TOKEN=<cloudflare-tunnel-token>
 
 # Optional: store uploads outside wwwroot (e.g. a mounted volume).
 # Storage__UploadsPath=/var/gp-signage/uploads
+
+# First-run admin (only used when no admin users exist yet).
+Auth__InitialAdmin__Username=admin
+Auth__InitialAdmin__Password=<strong-password>   # if omitted, a random one is logged once
+# Auth__InitialAdmin__DisplayName=Administrator
 ```
 
 > Only host keys like `ASPNETCORE_URLS` / `ASPNETCORE_ENVIRONMENT` take the `ASPNETCORE_` prefix.
@@ -482,6 +555,8 @@ psql -h localhost -U ocbuumaster -d gp_signage \
 - [x] Admin page — displays CRUD, slide upload/durations, **per-display playlist** builder (reorder/remove/clear)
 - [x] **Display CRUD** (create/rename/re-slug/delete) with live player handling (`SlugChanged`, `DisplayDeleted`)
 - [x] **Per-slide durations** (editable in admin; respected by the player)
+- [x] **Admin authentication** — cookie login, PBKDF2 password hashing, first-run admin bootstrap
+- [x] **User management** — add / rename / reset-password / delete admin users (admin-only)
 - [ ] Pi kiosk setup (Chromium kiosk + portrait rotation + systemd watchdog)  ← **next**
 - [ ] Auto-apply migrations on startup (config-guarded) for production deploys
 - [ ] Optional: Cloudflare Access / app auth; drag-and-drop playlist reorder; display reordering
