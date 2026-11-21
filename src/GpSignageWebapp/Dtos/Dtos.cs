@@ -8,6 +8,7 @@ public record SlideDto(
     string Title,
     string MediaUrl,
     string MediaType,
+    string Fit,
     int DurationSeconds,
     int SortOrder)
 {
@@ -16,6 +17,7 @@ public record SlideDto(
         s.Title,
         s.MediaUrl,
         s.MediaType.ToString(),
+        s.Fit.ToString(),
         s.DurationSeconds,
         s.SortOrder);
 }
@@ -111,4 +113,5 @@ public record UpdateSlideRequest(
     string? Title,
     int? DurationSeconds,
     int? SortOrder,
-    bool? IsActive);
+    bool? IsActive,
+    string? Fit);

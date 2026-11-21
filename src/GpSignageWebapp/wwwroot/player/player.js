@@ -60,6 +60,11 @@
         return (slide.mediaType || "").toLowerCase() === "video";
     }
 
+    // Per-slide fit: "Cover" fills the screen (crops), anything else = "Contain" (letterbox).
+    function fitFor(slide) {
+        return (slide && String(slide.fit || "").toLowerCase() === "cover") ? "cover" : "contain";
+    }
+
     // ---- Preloading -----------------------------------------------------------
     // Large images (e.g. full-res PNG screenshots) decode slowly; the dwell timer
     // only starts after an image loads, so a slow load makes the PREVIOUS slide
@@ -121,7 +126,8 @@
         const layer = backLayer;
         const seq = ++loadSeq;
         layer.dataset.seq = String(seq);
-        trace("showImage", slide.mediaUrl, "-> layer", layer.id, "seq", seq, "index", index);
+        layer.style.objectFit = fitFor(slide);   // per-slide: cover (fill/crop) or contain (bars)
+        trace("showImage", slide.mediaUrl, "-> layer", layer.id, "seq", seq, "index", index, "fit", fitFor(slide));
 
         let settled = false;
 

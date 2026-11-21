@@ -1,9 +1,17 @@
-namespace GpSignageWebapp.Models;
-
 public enum MediaType
 {
     Image = 0,
     Video = 1,
+}
+
+/// <summary>How the media is fitted to the screen.</summary>
+public enum MediaFit
+{
+    /// <summary>Show the whole image (letterbox / pillar-box, never crop). Default.</summary>
+    Contain = 0,
+
+    /// <summary>Fill the whole screen, cropping overflow (full-bleed).</summary>
+    Cover = 1,
 }
 
 public class Slide
@@ -18,6 +26,12 @@ public class Slide
     public string MediaUrl { get; set; } = string.Empty;
 
     public MediaType MediaType { get; set; } = MediaType.Image;
+
+    /// <summary>
+    /// How the image is fitted to the TV: Contain (whole image, bars) or Cover (fill, crop).
+    /// Ignored for video (videos always use Contain to avoid cropping content).
+    /// </summary>
+    public MediaFit Fit { get; set; } = MediaFit.Contain;
 
     /// <summary>
     /// How long the slide is shown, in seconds. Ignored for video (plays to end).

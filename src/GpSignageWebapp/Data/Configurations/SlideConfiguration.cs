@@ -25,6 +25,12 @@ public class SlideConfiguration : IEntityTypeConfiguration<Slide>
             .HasMaxLength(20)
             .IsRequired();
 
+        builder.Property(s => s.Fit)
+            .HasConversion<string>()
+            .HasMaxLength(20)
+            .HasDefaultValue(MediaFit.Contain)
+            .IsRequired();
+
         builder.Property(s => s.DurationSeconds)
             .HasDefaultValue(10);
 

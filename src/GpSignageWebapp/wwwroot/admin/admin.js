@@ -26,6 +26,7 @@
     const uploadForm = document.getElementById("uploadForm");
     const fileInput = document.getElementById("fileInput");
     const titleInput = document.getElementById("titleInput");
+    const fitInput = document.getElementById("fitInput");
     const durationInput = document.getElementById("durationInput");
     const uploadBtn = document.getElementById("uploadBtn");
     const clearPlaylistBtn = document.getElementById("clearPlaylistBtn");
@@ -263,6 +264,15 @@
                        <input type="number" min="1" max="600" value="${Number(s.durationSeconds) || 10}"
                               data-dur="${esc(s.id)}" /> <span>s</span>
                    </label>`;
+            // Per-slide fit (images only; videos always use "contain" so nothing is cropped).
+            const fit = isVideo(s)
+                ? ``
+                : `<label class="fit" title="How the image fills the screen">
+                       <select data-fit="${esc(s.id)}">
+                           <option value="Contain"${s.fit !== "Cover" ? " selected" : ""}>Fit (bars)</option>
+                           <option value="Cover"${s.fit === "Cover" ? " selected" : ""}>Fill (crop)</option>
+                       </select>
+                   </label>`;
             return `
                 <div class="slide${added ? " in-playlist" : ""}" data-id="${esc(s.id)}">
                     <button class="del" data-del="${esc(s.id)}" title="Delete slide">×</button>
@@ -271,7 +281,7 @@
                         <span class="title">${esc(s.title)}</span>
                         <span class="type">${esc(s.mediaType)}</span>
                     </div>
-                    <div class="actions">${addBtn}${dur}</div>
+                    <div class="actions">${addBtn}${dur}${fit}</div>
                 </div>`;
         }).join("");
 
@@ -294,6 +304,15 @@
                 setDuration(input.dataset.dur, val, input);
             });
         });
+        slidesEl.querySelectorAll("[data-fit]").forEach(sel => {
+            sel.addEventListener("change", () => {
+                const slide = slides.find(s => s.id === sel.dataset.fit);
+                if (!slide) return;
+                const val = sel.value === "Cover" ? "Cover" : "Contain";
+                if (val === (slide.fit || "Contain")) return;
+                setFit(sel.dataset.fit, val);
+            });
+        });
     }
 
     // ---- Render: playlist -----------------------------------------------------
@@ -310,7 +329,9 @@
         }
         playlistEl.innerHTML = pl.map((s, i) => {
             const thumbInner = isVideo(s) ? "▶" : `<img src="${esc(s.mediaUrl)}" alt="" />`;
-            const durLabel = isVideo(s) ? `<span class="pl-dur">auto</span>` : `<span class="pl-dur">${Number(s.durationSeconds) || 10}s</span>`;
+            const durLabel = isVideo(s)
+                ? `<span class="pl-dur">auto</span>`
+                : `<span class="pl-dur">${Number(s.durationSeconds) || 10}s · ${s.fit === "Cover" ? "fill" : "fit"}</span>`;
             return `
                 <div class="pl-item" data-id="${esc(s.id)}" data-index="${i}">
                     <div class="num">${i + 1}</div>
@@ -406,6 +427,7 @@
         const form = new FormData();
         form.append("file", file);
         if (titleInput.value.trim()) form.append("title", titleInput.value.trim());
+        if (fitInput && fitInput.value) form.append("fit", fitInput.value);
         if (durationInput.value) form.append("durationSeconds", durationInput.value);
 
         uploadBtn.disabled = true;
@@ -446,6 +468,30 @@
             toast(`Duration set to ${seconds}s.`);
         } catch (err) {
             renderSlides();   // restore the input to the persisted value
+            toast(`Failed: ${err.message}`, true);
+        }
+    }
+
+    async function setFit(slideId, fit) {
+        try {
+            const updated = await api(`/api/slides/${enc(slideId)}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ fit }),
+            });
+            const i = slides.findIndex(s => s.id === slideId);
+            if (i >= 0) slides[i] = updated;
+
+            // If this slide is in the selected display's playlist, push the change to the TV.
+            const d = currentDisplay();
+            if (d && (d.playlist || []).some(s => s.id === slideId)) {
+                await setPlaylist((d.playlist || []).map(s => s.id), null);
+            } else {
+                renderSlides();
+            }
+            toast(`Fit set to ${fit === "Cover" ? "Fill (crop)" : "Fit (bars)"}.`);
+        } catch (err) {
+            renderSlides();
             toast(`Failed: ${err.message}`, true);
         }
     }

@@ -96,10 +96,11 @@
         .upload-form input[type="file"] { flex: 1 1 200px; color: var(--muted); font-size: 13px; }
         .upload-form input[type="text"] { flex: 1 1 140px; }
         .upload-form input[type="number"] { flex: 0 0 90px; }
-        .upload-form input[type="text"], .upload-form input[type="number"] {
+        .upload-form input[type="text"], .upload-form input[type="number"], .upload-form select {
             background: var(--bg); color: var(--text); border: 1px solid var(--border);
             border-radius: 8px; padding: 8px 10px; font-size: 14px;
         }
+        .upload-form select { flex: 1 1 170px; }
 
         /* Slide library grid */
         .slides {
@@ -134,6 +135,14 @@
             border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; font-size: 13px;
         }
         .slide .dur-auto { font-size: 12px; color: var(--muted); }
+        .slide .fit {
+            display: inline-flex; align-items: center;
+            font-size: 12px; color: var(--muted);
+        }
+        .slide .fit select {
+            background: var(--bg); color: var(--text); border: 1px solid var(--border);
+            border-radius: 6px; padding: 4px 6px; font-size: 12px;
+        }
         .slide .del {
             position: absolute; top: 6px; right: 6px; z-index: 2;
             background: rgba(0,0,0,.6); color: #fff; border: 0; border-radius: 6px;
@@ -263,6 +272,10 @@
             <form id="uploadForm" class="upload-form">
                 <input type="file" id="fileInput" accept="image/*,video/mp4,video/webm,video/quicktime" required />
                 <input type="text" id="titleInput" placeholder="Title (optional)" />
+                <select id="fitInput" title="How the image fills the TV screen">
+                    <option value="Contain">Fit: whole image (bars)</option>
+                    <option value="Cover">Fit: fill screen (crop)</option>
+                </select>
                 <!-- Duration hidden until playback tuning; default 10s applies. -->
                 <input type="number" id="durationInput" value="10" min="1" hidden />
                 <button type="submit" class="btn" id="uploadBtn">Upload</button>

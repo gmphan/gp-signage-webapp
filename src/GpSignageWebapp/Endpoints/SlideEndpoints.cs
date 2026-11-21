@@ -69,6 +69,7 @@ public static class SlideEndpoints
         }
 
         var duration = int.TryParse(form["durationSeconds"], out var d) && d > 0 ? d : 10;
+        var fit = ParseFit(form["fit"].ToString()) ?? MediaFit.Contain;
 
         string mediaUrl;
         try
@@ -85,6 +86,7 @@ public static class SlideEndpoints
             Title = title,
             MediaUrl = mediaUrl,
             MediaType = mediaType.Value,
+            Fit = fit,
             DurationSeconds = duration,
             SortOrder = await NextSortOrderAsync(slides, ct),
             IsActive = true,
@@ -114,6 +116,8 @@ public static class SlideEndpoints
         if (body.DurationSeconds is > 0) slide.DurationSeconds = body.DurationSeconds.Value;
         if (body.SortOrder is not null) slide.SortOrder = body.SortOrder.Value;
         if (body.IsActive is not null) slide.IsActive = body.IsActive.Value;
+        var fit = ParseFit(body.Fit);
+        if (fit is not null) slide.Fit = fit.Value;
         slide.UpdatedAtUtc = DateTime.UtcNow;
 
         slides.Update(slide);
@@ -154,6 +158,12 @@ public static class SlideEndpoints
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
         return Enum.TryParse<MediaType>(raw, ignoreCase: true, out var mt) ? mt : null;
+    }
+
+    private static MediaFit? ParseFit(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        return Enum.TryParse<MediaFit>(raw, ignoreCase: true, out var fit) ? fit : null;
     }
 
     private static bool IsVideoExtension(string? ext) =>

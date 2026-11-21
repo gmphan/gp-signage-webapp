@@ -163,7 +163,7 @@ namespace GpSignageWebapp.Migrations
                     b.ToTable("display_slides", (string)null);
                 });
 
-            modelBuilder.Entity("GpSignageWebapp.Models.Slide", b =>
+            modelBuilder.Entity("Slide", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -176,6 +176,13 @@ namespace GpSignageWebapp.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("integer")
                         .HasDefaultValue(10);
+
+                    b.Property<string>("Fit")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasDefaultValue("Contain");
 
                     b.Property<bool>("IsActive")
                         .ValueGeneratedOnAdd()
@@ -212,7 +219,7 @@ namespace GpSignageWebapp.Migrations
 
             modelBuilder.Entity("GpSignageWebapp.Models.Display", b =>
                 {
-                    b.HasOne("GpSignageWebapp.Models.Slide", "CurrentSlide")
+                    b.HasOne("Slide", "CurrentSlide")
                         .WithMany()
                         .HasForeignKey("CurrentSlideId")
                         .OnDelete(DeleteBehavior.SetNull);
@@ -228,7 +235,7 @@ namespace GpSignageWebapp.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("GpSignageWebapp.Models.Slide", "Slide")
+                    b.HasOne("Slide", "Slide")
                         .WithMany()
                         .HasForeignKey("SlideId")
                         .OnDelete(DeleteBehavior.Cascade)
