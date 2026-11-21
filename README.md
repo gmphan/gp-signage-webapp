@@ -55,6 +55,9 @@ The app evolved from "show a single slide" to a **per-display playlist slideshow
 - Each `Display` owns an **ordered playlist** (`display_slides` join table).
 - The player **cycles** the playlist: images dwell for their `DurationSeconds` with a crossfade;
   videos play to their end, then advance. It loops.
+- **Per-slide Fit** controls how each image meets the screen: `Contain` (whole image, letterbox bars —
+  the default) or `Cover` (fill the whole screen edge-to-edge, cropping overflow). Set it per image in
+  the admin. Videos always use `Contain` so their content isn't cropped.
 - The rotation timer runs **in the browser**, so it's resilient to brief network blips — the server
   only needs to send the playlist on connect and whenever it changes.
 - A 1-slide playlist is equivalent to the old "show just this" behavior.
@@ -129,6 +132,7 @@ Player (browser) ◄──── SignalR "ShowPlaylist" ────────
 | `Title` | varchar(200) | required |
 | `MediaUrl` | varchar(1000) | relative URL under wwwroot, e.g. `/uploads/slide1.jpg` |
 | `MediaType` | varchar(20) | enum as string: `Image` / `Video` |
+| `Fit` | varchar(20) | enum as string: `Contain` (whole image, bars — default) / `Cover` (fill screen, crop). Ignored for video (always `Contain`). |
 | `DurationSeconds` | int | default 10; **ignored for video** (plays to end) |
 | `SortOrder` | int | |
 | `IsActive` | bool | default true |
@@ -177,6 +181,7 @@ fixed GUIDs. They are fully editable/removable from the admin UI afterward.
 - `20261118210301_AddDisplayOrientation` → `Orientation` column
 - `20261118230444_AddDisplayPlaylist` → `display_slides`
 - `20261118234726_AddAdminUsers` → `admin_users`
+- `AddSlideFit` → `slides.Fit` (Contain / Cover, default Contain)
 
 ---
 
@@ -186,18 +191,26 @@ fixed GUIDs. They are fully editable/removable from the admin UI afterward.
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/` | list the (active) slide library |
-| `POST` | `/` | upload media + create slide (`multipart/form-data`: `file`, optional `title`, `durationSeconds`) |
-| `PATCH` | `/{id}` | update `title` / `durationSeconds` / `sortOrder` / `isActive` (all optional) |
+| `POST` | `/` | upload media + create slide (`multipart/form-data`: `file`, optional `title`, `durationSeconds`, `fit`) |
+| `PATCH` | `/{id}` | update `title` / `durationSeconds` / `sortOrder` / `isActive` / `fit` (all optional) |
 | `DELETE` | `/{id}` | delete slide (removes its file + all playlist references) |
 
 Uploads are validated: **≤ 50 MB**, extensions `.jpg .jpeg .png .gif .webp .mp4 .webm .mov`.
 Stored under `wwwroot/uploads/` (or `Storage:UploadsPath` if configured to a mounted volume).
 
 **Images are optimized on upload** (`Storage/ImageOptimizer.cs`, **SkiaSharp**): downscaled to fit
-**1920×1080** (aspect preserved, no upscaling), EXIF orientation applied, and re-encoded as **JPEG q85**
+**1920×1080** (aspect preserved, no upscaling), **EXIF orientation applied**, and re-encoded as **JPEG q85**
 (or **PNG** when the image has transparency). A multi‑MB PNG screenshot becomes a few‑hundred‑KB JPEG,
 so it decodes fast on the Pi and the player doesn't stall between slides. Videos pass through untouched.
 If optimization fails, the original bytes are stored (uploads never blocked).
+
+> **EXIF orientation is applied explicitly** — the optimizer reads `SKCodec.EncodedOrigin` and rotates/
+> flips the pixels to upright before resizing (all 8 orientations), so phone/camera photos aren't
+> stored sideways/rotated. (Earlier versions didn't reliably apply EXIF, so uploads could come out
+> **rotated to the right**.)
+> **This only affects NEW uploads.** Images uploaded before this fix keep their stored orientation —
+> **re-upload** any that appear rotated (delete the slide, then upload it again). New uploads get a
+> unique filename each time, so re-uploading always bypasses any browser/CDN cache.
 
 ### Displays — `/api/displays`
 | Method | Path | Purpose |
@@ -287,6 +300,7 @@ Click **Users** (header) to open the Users modal:
 - **`/player/?display=<slug>`** — the TV page. Connects via SignalR, joins its group, and runs the
   rotation engine (`player.js`): crossfade between images (two stacked layers), videos play to end,
   loops, survives brief disconnects via auto-reconnect. No reload needed for live updates.
+  Each image's **Fit** (`Contain`/`Cover`) is applied per slide (sets `object-fit` on the layer caption).
   - **Preloading:** upcoming slides are decoded in the background (`preloadUpcoming`) so a heavy
     image doesn't cause a visible pause between slides.
   - **One-advance guarantees:** image loads use a `settled`/`loadSeq` guard (a cached image fires
@@ -296,7 +310,7 @@ Click **Users** (header) to open the Users modal:
 - **`/admin/`** — the control UI (`admin.js`), **auth-gated**. Header shows the signed-in user with
   **Users** (manage admins) and **Log out**. Three panels:
   - **Displays** — create (+ New), edit (✎), delete (🗑), select.
-  - **Slide Library** — upload, delete, **per-slide duration** editor, `+ Add` to the selected display.
+  - **Slide Library** — upload, delete, **per-slide duration** editor, **per-slide Fit** (whole image vs. fill/crop), `+ Add` to the selected display.
   - **Playlist** — ordered list for the selected display: reorder (↑/↓), remove (✕), Clear.
 - **`/lib/signalr/signalr.min.js`** — vendored SignalR client (no CDN dependency; works offline).
 
@@ -525,9 +539,10 @@ curl -s "http://192.168.68.130:8080/player/player.js" | grep -c 'function preloa
 > The cache headers above are what protect the **scripts**.
 
 ### ⚠️ Image optimization only affects NEW uploads
-Upload optimization (1920×1080 JPEG) runs at upload time. Files uploaded **before** it existed are
-still in the volume at their original size. After deploying the optimizer, **re-upload** any large
-images (delete the slide in the admin UI, then upload it again) so they get compressed. Verify:
+Upload optimization (1920×1080 JPEG + **EXIF orientation correction**) runs at upload time. Files
+uploaded **before** a given fix are still in the volume unchanged. After deploying an optimizer change,
+**re-upload** any affected images (delete the slide in the admin UI, then upload it again) so they get
+re-processed — e.g. large images to compress them, or sideways/rotated images to fix orientation. Verify:
 ```shell
 docker logs gp_signage_webapp_prd 2>&1 | grep -i "optimized"   # "optimized to N bytes" on new uploads
 docker exec gp_signage_webapp_prd sh -c 'ls -lh /app/uploads/' # large old files vs. small new ones
@@ -853,7 +868,7 @@ psql -h localhost -U ocbuumaster -d gp_signage \
 
 ### Admin (`/admin/`)
 1. **Displays panel** — `+ New` to add a TV (name → slug auto-derived, orientation). ✎ edit / 🗑 delete.
-2. **Slide Library** — upload images/videos; set each **image's duration** (seconds). Videos show `▶ auto`.
+2. **Slide Library** — upload images/videos; set each **image's duration** (seconds) and **Fit** (`Fit (bars)` = whole image, `Fill (crop)` = full-bleed). Videos show `▶ auto` (always contain).
 3. Select a display, then **`+ Add`** slides to build its playlist (right panel).
 4. **Reorder** with ↑/↓, **remove** with ✕, **Clear** to empty. All changes push live to the TV.
 
@@ -879,6 +894,8 @@ psql -h localhost -U ocbuumaster -d gp_signage \
 - [x] **User management** — add / rename / reset-password / delete admin users (admin-only)
 - [x] **Player robustness** — preload upcoming slides; one-advance guards (fixes double-`load` skip/stall); video safety timeout
 - [x] **Upload image optimization** — downscale to 1920×1080 + JPEG/PNG re-encode (SkiaSharp) so heavy PNGs don't stall the TVs
+- [x] **EXIF orientation on upload** — reads `SKCodec.EncodedOrigin` and rotates/flips upright (all 8 orientations) so phone photos aren't stored rotated
+- [x] **Per-slide Fit** — `Contain` (whole image, bars, default) or `Cover` (fill screen, crop), set per image in the admin (`slides.Fit` column)
 - [x] **Static asset cache busting** — `Cache-Control: no-cache` for `/player|/admin|/lib` so a rebuild is never shadowed by Cloudflare's 4h edge cache
 - [x] **Pi kiosk setup** — Chromium kiosk (Wayland), portrait rotation (`wlr-randr`), systemd **user** service + `enable-linger`, auto-restart (see [Raspberry Pi (kiosk display)](#raspberry-pi-kiosk-display))
 - [ ] Auto-apply migrations on startup (config-guarded) for production deploys
