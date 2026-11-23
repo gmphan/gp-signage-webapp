@@ -47,57 +47,96 @@ public static class SlideEndpoints
         }
 
         var form = await request.ReadFormAsync(ct);
-        var file = form.Files.GetFile("file");
-        if (file is null)
+
+        // Accept one OR many files under the same "file" field. The admin UI can
+        // select multiple at once; each becomes its own slide. (A single file keeps
+        // the original single-object response shape for compatibility.)
+        var files = form.Files.GetFiles("file");
+        if (files.Count == 0)
         {
             return Results.BadRequest(new { error = "No 'file' field in the upload." });
         }
 
-        var title = form["title"].ToString().Trim();
-        if (string.IsNullOrWhiteSpace(title))
+        // Fields shared by all files in this request (the UI applies one title/fit/
+        // duration to the whole batch). Per-file title defaults to the file name.
+        var sharedTitle = form["title"].ToString().Trim();
+        var sharedFit = ParseFit(form["fit"].ToString());
+        var sharedDuration = int.TryParse(form["durationSeconds"], out var d) && d > 0 ? d : (int?)null;
+
+        var created = new List<Slide>();
+        var errors = new List<string>();
+        var sortOrder = await NextSortOrderAsync(slides, ct);
+
+        foreach (var file in files)
         {
-            // Fall back to the file name (without extension) as the title.
-            title = Path.GetFileNameWithoutExtension(file.FileName);
+            if (file is null || file.Length == 0)
+            {
+                errors.Add($"{file?.FileName ?? "?"}: empty file.");
+                continue;
+            }
+
+            var title = sharedTitle;
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                title = Path.GetFileNameWithoutExtension(file.FileName);
+            }
+
+            // Derive media type from the extension unless explicitly provided.
+            var mediaType = ParseMediaType(form["mediaType"].ToString());
+            if (mediaType is null)
+            {
+                var ext = Path.GetExtension(file.FileName);
+                mediaType = IsVideoExtension(ext) ? MediaType.Video : MediaType.Image;
+            }
+
+            string mediaUrl;
+            try
+            {
+                mediaUrl = await storage.SaveAsync(file, ct);
+            }
+            catch (InvalidOperationException ex)
+            {
+                errors.Add($"{file.FileName}: {ex.Message}");
+                continue;
+            }
+
+            var slide = new Slide
+            {
+                Title = title,
+                MediaUrl = mediaUrl,
+                MediaType = mediaType.Value,
+                Fit = sharedFit ?? MediaFit.Contain,
+                DurationSeconds = sharedDuration ?? 10,
+                SortOrder = sortOrder++,
+                IsActive = true,
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow,
+            };
+
+            await slides.AddAsync(slide, ct);
+            created.Add(slide);
         }
 
-        // Derive media type from the extension unless explicitly provided.
-        var mediaType = ParseMediaType(form["mediaType"].ToString());
-        if (mediaType is null)
+        // Persist everything in one round-trip.
+        if (created.Count > 0)
         {
-            var ext = Path.GetExtension(file.FileName);
-            mediaType = IsVideoExtension(ext) ? MediaType.Video : MediaType.Image;
+            await slides.SaveChangesAsync(ct);
         }
 
-        var duration = int.TryParse(form["durationSeconds"], out var d) && d > 0 ? d : 10;
-        var fit = ParseFit(form["fit"].ToString()) ?? MediaFit.Contain;
-
-        string mediaUrl;
-        try
+        if (created.Count == 0)
         {
-            mediaUrl = await storage.SaveAsync(file, ct);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return Results.BadRequest(new { error = ex.Message });
+            return Results.BadRequest(new { error = "No files could be uploaded.", errors });
         }
 
-        var slide = new Slide
-        {
-            Title = title,
-            MediaUrl = mediaUrl,
-            MediaType = mediaType.Value,
-            Fit = fit,
-            DurationSeconds = duration,
-            SortOrder = await NextSortOrderAsync(slides, ct),
-            IsActive = true,
-            CreatedAtUtc = DateTime.UtcNow,
-            UpdatedAtUtc = DateTime.UtcNow,
-        };
-
-        await slides.AddAsync(slide, ct);
-        await slides.SaveChangesAsync(ct);
-
-        return Results.Created($"/api/slides/{slide.Id}", SlideDto.From(slide));
+        // Backward-compatible shape: a single uploaded file returns the slide object;
+        // multiple files return an array. Partial failures ride along as `errors`.
+        return files.Count == 1 && errors.Count == 0
+            ? Results.Created($"/api/slides/{created[0].Id}", SlideDto.From(created[0]))
+            : Results.Created("/api/slides", new
+            {
+                slides = created.Select(SlideDto.From).ToArray(),
+                errors,
+            });
     }
 
     private static async Task<IResult> UpdateAsync(

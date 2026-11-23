@@ -419,26 +419,53 @@
     function enc(s) { return encodeURIComponent(s); }
 
     // ---- Actions: slides ------------------------------------------------------
+    // Uploads one OR many files at once. Files are sent under the same "file"
+    // field; the server creates one slide per file. A single file returns a slide
+    // object, two-or-more return { slides: [...], errors: [...] }.
     async function uploadSlide(event) {
         event.preventDefault();
-        const file = fileInput.files && fileInput.files[0];
-        if (!file) { toast("Choose a file to upload.", true); return; }
+        const files = Array.from(fileInput.files || []);
+        if (!files.length) { toast("Choose a file to upload.", true); return; }
 
         const form = new FormData();
-        form.append("file", file);
+        files.forEach(f => form.append("file", f));
+        // Title/fit/duration apply to the whole batch (per-file title defaults to
+        // the file name on the server when left blank).
         if (titleInput.value.trim()) form.append("title", titleInput.value.trim());
         if (fitInput && fitInput.value) form.append("fit", fitInput.value);
         if (durationInput.value) form.append("durationSeconds", durationInput.value);
 
         uploadBtn.disabled = true;
-        uploadBtn.textContent = "Uploading…";
+        uploadBtn.textContent = files.length > 1 ? `Uploading ${files.length}…` : "Uploading…";
         try {
-            const created = await api("/api/slides", { method: "POST", body: form });
-            slides.push(created);
+            const result = await api("/api/slides", { method: "POST", body: form });
+
+            // Normalise the two response shapes into { created, errors }.
+            let created = [];
+            let errors = [];
+            if (Array.isArray(result)) {
+                created = result;
+            } else if (result && Array.isArray(result.slides)) {
+                created = result.slides;
+                errors = result.errors || [];
+            } else if (result && result.id) {
+                created = [result];
+            }
+
+            created.forEach(s => slides.push(s));
             uploadForm.reset();
             durationInput.value = "10";
             renderSlides();
-            toast(`Uploaded “${created.title}”.`);
+
+            if (created.length && errors.length) {
+                toast(`Uploaded ${created.length}, ${errors.length} failed: ${errors[0]}`, true);
+            } else if (created.length > 1) {
+                toast(`Uploaded ${created.length} slides.`);
+            } else if (created.length === 1) {
+                toast(`Uploaded “${created[0].title}”.`);
+            } else {
+                toast(`Upload failed: ${errors[0] || "no files accepted"}`, true);
+            }
         } catch (err) {
             toast(`Upload failed: ${err.message}`, true);
         } finally {

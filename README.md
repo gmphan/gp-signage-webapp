@@ -191,7 +191,7 @@ fixed GUIDs. They are fully editable/removable from the admin UI afterward.
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/` | list the (active) slide library |
-| `POST` | `/` | upload media + create slide (`multipart/form-data`: `file`, optional `title`, `durationSeconds`, `fit`) |
+| `POST` | `/` | upload media + create slide(s) (`multipart/form-data`: one **or more** `file` fields, optional `title`, `durationSeconds`, `fit`). **Single file** → `201` with the slide object; **multiple files** → `201` with `{ slides: [...], errors: [...] }` (one slide per file; `title`/`fit`/`durationSeconds` apply to the whole batch, each file's title defaults to its name; a bad/empty file is reported in `errors` without failing the batch). |
 | `PATCH` | `/{id}` | update `title` / `durationSeconds` / `sortOrder` / `isActive` / `fit` (all optional) |
 | `DELETE` | `/{id}` | delete slide (removes its file + all playlist references) |
 
@@ -868,7 +868,7 @@ psql -h localhost -U ocbuumaster -d gp_signage \
 
 ### Admin (`/admin/`)
 1. **Displays panel** — `+ New` to add a TV (name → slug auto-derived, orientation). ✎ edit / 🗑 delete.
-2. **Slide Library** — upload images/videos; set each **image's duration** (seconds) and **Fit** (`Fit (bars)` = whole image, `Fill (crop)` = full-bleed). Videos show `▶ auto` (always contain).
+2. **Slide Library** — upload images/videos (**select multiple files at once** for a batch upload — each becomes its own slide); set each **image's duration** (seconds) and **Fit** (`Fit (bars)` = whole image, `Fill (crop)` = full-bleed). Videos show `▶ auto` (always contain).
 3. Select a display, then **`+ Add`** slides to build its playlist (right panel).
 4. **Reorder** with ↑/↓, **remove** with ✕, **Clear** to empty. All changes push live to the TV.
 
@@ -896,6 +896,7 @@ psql -h localhost -U ocbuumaster -d gp_signage \
 - [x] **Upload image optimization** — downscale to 1920×1080 + JPEG/PNG re-encode (SkiaSharp) so heavy PNGs don't stall the TVs
 - [x] **EXIF orientation on upload** — reads `SKCodec.EncodedOrigin` and rotates/flips upright (all 8 orientations) so phone photos aren't stored rotated
 - [x] **Per-slide Fit** — `Contain` (whole image, bars, default) or `Cover` (fill screen, crop), set per image in the admin (`slides.Fit` column)
+- [x] **Multi-file upload** — select several files at once in the admin; each becomes its own slide (`POST /api/slides` accepts multiple `file` fields)
 - [x] **Static asset cache busting** — `Cache-Control: no-cache` for `/player|/admin|/lib` so a rebuild is never shadowed by Cloudflare's 4h edge cache
 - [x] **Pi kiosk setup** — Chromium kiosk (Wayland), portrait rotation (`wlr-randr`), systemd **user** service + `enable-linger`, auto-restart (see [Raspberry Pi (kiosk display)](#raspberry-pi-kiosk-display))
 - [ ] Auto-apply migrations on startup (config-guarded) for production deploys
